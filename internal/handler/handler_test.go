@@ -12,10 +12,14 @@ import (
 	"github.com/vskstudio/dctl/internal/state"
 )
 
+type sentMsg struct{ channelID, content string }
+
 type fakeDiscord struct {
 	created  []string
 	archived []string
 	homeType int
+	sent     []sentMsg
+	sendErr  error
 }
 
 func (f *fakeDiscord) ChannelType(ctx context.Context, id string) (int, error) {
@@ -32,6 +36,18 @@ func (f *fakeDiscord) ForumPost(ctx context.Context, forumID, name, content stri
 func (f *fakeDiscord) ArchiveChannel(ctx context.Context, id string) error {
 	f.archived = append(f.archived, id)
 	return nil
+}
+func (f *fakeDiscord) Send(ctx context.Context, channelID, content string) (*dctl.Message, error) {
+	if f.sendErr != nil {
+		return nil, f.sendErr
+	}
+	f.sent = append(f.sent, sentMsg{channelID: channelID, content: content})
+	return &dctl.Message{ID: "msg-" + channelID, ChannelID: channelID, Content: content}, nil
+}
+
+func TestDiscordInterfaceHasSend(t *testing.T) {
+	var _ discord = (*fakeDiscord)(nil)
+	var _ discord = (*dctl.Client)(nil)
 }
 
 type fakeSup struct{ started, stopped []string }
@@ -52,6 +68,7 @@ func (f *fakeWT) Create(repo, name string) (string, error) {
 	f.created = append(f.created, name)
 	return f.path, nil
 }
+func (f *fakeWT) Branch(name string) string { return "session/" + name }
 func (f *fakeWT) Remove(repo, name string, force bool) error {
 	if f.removeErr != nil && !force {
 		return f.removeErr

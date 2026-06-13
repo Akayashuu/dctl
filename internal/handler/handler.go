@@ -38,6 +38,7 @@ type discord interface {
 	CreateChannelUnder(ctx context.Context, parentID, name string) (*dctl.Channel, error)
 	ForumPost(ctx context.Context, forumID, name, content string) (*dctl.Channel, error)
 	ArchiveChannel(ctx context.Context, id string) error
+	Send(ctx context.Context, channelID, content string) (*dctl.Message, error)
 }
 
 // supervisor starts/stops the bridge process backing a session.
