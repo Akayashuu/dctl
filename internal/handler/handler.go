@@ -3,7 +3,10 @@ package handler
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/forge"
@@ -15,6 +18,10 @@ import (
 // (session/<name>), so anything outside this set could traverse directories or
 // forge odd refs even though the caller is allowlisted.
 var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
+
+// projectRe constrains a workspace project name to a single safe path segment
+// (no "/", no "..", no spaces), so workspace+project cannot escape the root.
+var projectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 // discord is the subset of Client the Handler needs (injected so routing is testable).
 type discord interface {
@@ -85,9 +92,17 @@ func (h *Handler) Handle(ctx context.Context, in dctl.Interaction) dctl.Response
 
 func (h *Handler) handleSet(ctx context.Context, in dctl.Interaction) dctl.Response {
 	sub, _ := in.Data.Subcommand()
-	if sub != "home" {
+	switch sub {
+	case "home":
+		return h.setHome(ctx, in)
+	case "workspace":
+		return h.setWorkspace(in)
+	default:
 		return errf("unknown /set subcommand")
 	}
+}
+
+func (h *Handler) setHome(ctx context.Context, in dctl.Interaction) dctl.Response {
 	id, ok := in.Data.Opt("channel")
 	if !ok {
 		return errf("missing channel")
@@ -109,6 +124,30 @@ func (h *Handler) handleSet(ctx context.Context, in dctl.Interaction) dctl.Respo
 		return errf("save failed: %v", err)
 	}
 	return dctl.Response{Content: fmt.Sprintf("🏠 Home set to %s `%s`.", typ, id), Ephemeral: true}
+}
+
+func (h *Handler) setWorkspace(in dctl.Interaction) dctl.Response {
+	p, ok := in.Data.Opt("path")
+	if !ok || p == "" {
+		return errf("missing path")
+	}
+	if strings.HasPrefix(p, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return errf("bad path: %v", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil || !info.IsDir() {
+		return errf("not a directory: %s", abs)
+	}
+	if err := h.st.SetWorkspace(abs); err != nil {
+		return errf("save failed: %v", err)
+	}
+	return dctl.Response{Content: fmt.Sprintf("📂 Workspace set to `%s`.", abs), Ephemeral: true}
 }
 
 func (h *Handler) handleSession(ctx context.Context, in dctl.Interaction) dctl.Response {
@@ -144,9 +183,23 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	if c, ok := in.Data.Opt("cmd"); ok && c != "" {
 		cmd = c
 	}
+	ws := h.st.WorkspaceRoot()
+	project := ""
+	if ws != "" {
+		project, _ = in.Data.Opt("project")
+		if project == "" {
+			return errf("specify project: (see `/workspace list`) or clone:")
+		}
+		if !projectRe.MatchString(project) {
+			return errf("invalid project %q — use a single name (no /, spaces, or ..)", project)
+		}
+	}
+	repo := ws
+	if project != "" {
+		repo = filepath.Join(ws, project)
+	}
 	// Worktree isolation by default; shared:true runs in the main checkout.
 	shared := in.Data.OptBool("shared")
-	repo := h.st.WorkspaceRoot() // legacy root for now; project resolution added in a later task
 	var worktree, note string
 	if !shared {
 		path, err := h.wt.Create(repo, name)
@@ -170,14 +223,14 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			_ = h.wt.Remove(repo, name, true) // roll back the worktree we just made
 			return errf("create channel: %v", err)
 		}
-		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree, Project: project}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, title, "Session **"+title+"** started.")
 		if err != nil {
 			_ = h.wt.Remove(repo, name, true)
 			return errf("create forum post: %v", err)
 		}
-		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree, Project: project}
 	default:
 		return errf("home type %q unsupported", home.Type)
 	}
@@ -203,6 +256,9 @@ func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Re
 	if sess.Worktree != "" {
 		force := in.Data.OptBool("force")
 		repo := h.st.WorkspaceRoot()
+		if sess.Project != "" {
+			repo = filepath.Join(repo, sess.Project)
+		}
 		if err := h.wt.Remove(repo, name, force); err != nil {
 			return errf("%v — commit, or close with force:true to discard (branch session/%s is kept)", err, name)
 		}

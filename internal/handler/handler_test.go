@@ -351,3 +351,94 @@ func TestSessionCloseUnknownNameIsNoop(t *testing.T) {
 		t.Fatalf("unknown close must be a no-op, got archived=%+v stopped=%+v", d.archived, sup.stopped)
 	}
 }
+
+func TestSetWorkspacePersists(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	dir := t.TempDir()
+	r := h.Handle(context.Background(), it("owner", "set", "workspace",
+		dctl.InteractionOption{Name: "path", Value: dir}))
+	if r.Content == "" || !r.Ephemeral {
+		t.Fatalf("expected ephemeral confirmation, got %+v", r)
+	}
+	if st.Workspace != dir {
+		t.Fatalf("workspace not set: %q", st.Workspace)
+	}
+}
+
+func TestSetWorkspaceRejectsMissingDir(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	h.Handle(context.Background(), it("owner", "set", "workspace",
+		dctl.InteractionOption{Name: "path", Value: "/no/such/dir/here"}))
+	if st.Workspace != "" {
+		t.Fatalf("missing dir should not be saved, got %q", st.Workspace)
+	}
+}
+
+func TestSessionCreateUsesWorkspaceProject(t *testing.T) {
+	h, _, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	_ = st.SetWorkspace("/ws")
+	h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"},
+		dctl.InteractionOption{Name: "project", Value: "myproj"}))
+	if len(wt.createdRepos) != 1 || wt.createdRepos[0] != "/ws/myproj" {
+		t.Fatalf("expected Create on /ws/myproj, got %+v", wt.createdRepos)
+	}
+	sess, _ := st.FindSession("demo")
+	if sess.Project != "myproj" {
+		t.Fatalf("session.Project not persisted: %+v", sess)
+	}
+}
+
+func TestSessionCreateRequiresProjectWhenWorkspaceSet(t *testing.T) {
+	h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	_ = st.SetWorkspace("/ws")
+	r := h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if !r.Ephemeral || r.Content == "" {
+		t.Fatalf("expected error asking for project, got %+v", r)
+	}
+	if len(wt.created) != 0 || len(d.created) != 0 {
+		t.Fatalf("nothing should be created: wt=%v ch=%v", wt.created, d.created)
+	}
+}
+
+func TestSessionCreateRejectsProjectTraversal(t *testing.T) {
+	for _, p := range []string{"../escape", "a/b", "..", "with space"} {
+		h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
+		st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+		_ = st.SetWorkspace("/ws")
+		r := h.Handle(context.Background(), it("owner", "session", "create",
+			dctl.InteractionOption{Name: "name", Value: "demo"},
+			dctl.InteractionOption{Name: "project", Value: p}))
+		if !r.Ephemeral || r.Content == "" {
+			t.Fatalf("project %q: expected rejection, got %+v", p, r)
+		}
+		if len(wt.created) != 0 || len(d.created) != 0 {
+			t.Fatalf("project %q: nothing should be created", p)
+		}
+	}
+}
+
+func TestSessionCreateLegacyNoWorkspace(t *testing.T) {
+	// No workspace set → legacy behaviour: repo is "" (WorkspaceRoot), still works.
+	h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if len(d.created) != 1 || len(wt.created) != 1 {
+		t.Fatalf("legacy create should still work: ch=%v wt=%v", d.created, wt.created)
+	}
+}
+
+func TestSessionCloseUsesProjectRepo(t *testing.T) {
+	h, _, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
+	_ = st.SetWorkspace("/ws")
+	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/ws/myproj/.dctl-sessions/demo", Project: "myproj"})
+	h.Handle(context.Background(), it("owner", "session", "close",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if len(wt.removed) != 1 {
+		t.Fatalf("expected worktree removed: %+v", wt.removed)
+	}
+}
