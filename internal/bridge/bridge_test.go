@@ -22,3 +22,40 @@ func TestRecordParticipantEmptyPathNoop(t *testing.T) {
 	// must not panic or create anything when no journal configured
 	recordParticipant("", "u1")
 }
+
+func TestAuthorizedEnforcesAllowlist(t *testing.T) {
+	sp := filepath.Join(t.TempDir(), "state.json")
+	st := state.NewState(sp)
+	if err := st.AddSession(state.Session{Name: "demo", ChannelID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddSessionAllow("demo", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	st.AddAllow("admin") // global allowlist
+
+	o := Options{AllowState: sp, Session: "demo"}
+	if !authorized(o, "u1") {
+		t.Fatal("u1 is on the per-session allowlist → must be authorized")
+	}
+	if !authorized(o, "admin") {
+		t.Fatal("globally-allowed admin → must be authorized (global OR per-session)")
+	}
+	if authorized(o, "stranger") {
+		t.Fatal("stranger is on no list → must be rejected")
+	}
+}
+
+func TestAuthorizedNoEnforcementWhenStateEmpty(t *testing.T) {
+	// Standalone bridge (no --allow-state) answers everyone, preserving old behaviour.
+	if !authorized(Options{AllowState: ""}, "anyone") {
+		t.Fatal("empty AllowState must disable enforcement (answer everyone)")
+	}
+}
+
+func TestAuthorizedFailsOpenOnUnreadableState(t *testing.T) {
+	// A missing/unreadable state file must not brick the session: fail open.
+	if !authorized(Options{AllowState: "/nonexistent/state.json", Session: "demo"}, "u1") {
+		t.Fatal("unreadable state must fail open (authorize) rather than lock everyone out")
+	}
+}

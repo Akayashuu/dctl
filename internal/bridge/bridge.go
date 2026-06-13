@@ -40,6 +40,8 @@ type Options struct {
 	State    string
 	After    string
 	Participants string // append-only journal of message authors (empty = disabled)
+	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
+	Session      string // session name, used with AllowState to resolve the per-session allowlist
 	Verbose      bool
 }
 
@@ -105,6 +107,10 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 				continue // never answer a bot (incl. ourselves) → no loops
 			}
 			recordParticipant(o.Participants, m.Author.ID)
+			if !authorized(o, m.Author.ID) {
+				logf(o.Verbose, "skip <%s>: not on the allowlist for %q", m.Author.Username, o.Session)
+				continue // unauthorized author → observed but never drives the session
+			}
 			logf(o.Verbose, "<%s> %s", m.Author.Username, oneline(m.Content))
 			// Acknowledge immediately so the human sees the message was picked
 			// up while the (slow) command runs. Best-effort: ignore if the bot
@@ -168,6 +174,32 @@ func persist(path, id string) {
 // break the bridge loop.
 func recordParticipant(path, userID string) {
 	_, _ = state.AppendParticipant(path, userID)
+}
+
+// authorized reports whether userID may drive this session's bridge, enforcing
+// the allowlist (semantics B). When AllowState is empty the bridge runs
+// unguarded (standalone use / no enforcement). The daemon state is read fresh
+// per message so /session allow changes take effect without a restart;
+// saveLocked writes atomically, so reads never tear. An unreadable state file
+// fails open: a transient read error must not lock every author out of a live
+// session.
+func authorized(o Options, userID string) bool {
+	if o.AllowState == "" {
+		return true
+	}
+	st, err := state.LoadState(o.AllowState)
+	if err != nil {
+		logf(o.Verbose, "allowlist: cannot read %s (%v) — failing open", o.AllowState, err)
+		return true
+	}
+	if _, ok := st.FindSession(o.Session); !ok {
+		// State doesn't know this session (missing/empty file, or not yet
+		// persisted): we can't enforce an allowlist we can't see, so fail open
+		// rather than lock every author out of a live session.
+		logf(o.Verbose, "allowlist: session %q absent from %s — failing open", o.Session, o.AllowState)
+		return true
+	}
+	return st.SessionAllowed(o.Session, userID)
 }
 
 // chunk splits s into pieces no longer than max, preferring to break on a
