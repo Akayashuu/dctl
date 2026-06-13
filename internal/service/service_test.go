@@ -190,6 +190,97 @@ func assertCmd(t *testing.T, p Plan, want string) {
 	t.Errorf("no command matching %q in plan", want)
 }
 
+// TestSkipStartOmitsImmediateStart: with SkipStart (no token yet), install must
+// enable boot-start but NOT start the daemon now — else it crash-loops against
+// the empty template (Restart=always / KeepAlive).
+func TestSkipStartOmitsImmediateStart(t *testing.T) {
+	// Linux: `enable` present, `enable --now` absent.
+	lc := testConfig("linux")
+	lc.SkipStart = true
+	lp, err := BuildPlan(lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ljoined string
+	for _, c := range lp.Commands {
+		ljoined += strings.Join(c.Argv, " ") + "\n"
+	}
+	if strings.Contains(ljoined, "enable --now") {
+		t.Errorf("SkipStart linux plan must not start now:\n%s", ljoined)
+	}
+	if !strings.Contains(ljoined, "enable "+linuxUnitName) {
+		t.Errorf("SkipStart linux plan should still enable at boot:\n%s", ljoined)
+	}
+
+	// macOS: no `launchctl load` (RunAtLoad starts it next login).
+	mc := testConfig("darwin")
+	mc.SkipStart = true
+	mp, err := BuildPlan(mc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range mp.Commands {
+		if len(c.Argv) >= 2 && c.Argv[0] == "launchctl" && c.Argv[1] == "load" {
+			t.Errorf("SkipStart mac plan must not load (start) the agent: %v", c.Argv)
+		}
+	}
+	// Non-skip is still the start path.
+	mp2, _ := BuildPlan(testConfig("darwin"))
+	assertCmd(t, mp2, "launchctl load -w")
+}
+
+// TestEnvFileHasToken: the start decision hinges on a real, non-empty token —
+// the empty template and a comment line must read as "no token".
+func TestEnvFileHasToken(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "absent.env")
+	if envFileHasToken(missing) {
+		t.Error("absent env file should report no token")
+	}
+	tmpl := filepath.Join(dir, "tmpl.env")
+	if err := os.WriteFile(tmpl, []byte(envTemplate), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if envFileHasToken(tmpl) {
+		t.Error("empty template should report no token")
+	}
+	filled := filepath.Join(dir, "filled.env")
+	if err := os.WriteFile(filled, []byte("# c\nDISCORD_BOT_TOKEN=  abc.def  \n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !envFileHasToken(filled) {
+		t.Error("a filled token should be detected")
+	}
+	// A commented-out token must not count.
+	commented := filepath.Join(dir, "commented.env")
+	if err := os.WriteFile(commented, []byte("#DISCORD_BOT_TOKEN=abc\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if envFileHasToken(commented) {
+		t.Error("commented token line should not count")
+	}
+}
+
+// TestInstallSkipsStartWhenNoToken: the end-to-end decision in Install — a fresh
+// install (no env file) flips SkipStart so no immediate-start command is run.
+// We exercise it on a non-host OS plan so no real services are touched.
+func TestInstallSkipsStartWhenNoToken(t *testing.T) {
+	dir := t.TempDir()
+	c := testConfig("linux")
+	c.EnvFile = filepath.Join(dir, "dctl.env") // does not exist yet
+	// Mirror what Install computes, then assert the plan it would run.
+	if envFileHasToken(c.EnvFile) {
+		t.Fatal("precondition: env file should have no token")
+	}
+	c.SkipStart = true
+	p, _ := BuildPlan(c)
+	for _, cmd := range p.Commands {
+		if strings.Contains(strings.Join(cmd.Argv, " "), "--now") {
+			t.Errorf("fresh install must not start the service now: %v", cmd.Argv)
+		}
+	}
+}
+
 // TestEnvTemplateCarriesNoValues guards the core secret-hygiene invariant: the
 // template lists each var but never a value, so installing can't leak a token.
 func TestEnvTemplateCarriesNoValues(t *testing.T) {

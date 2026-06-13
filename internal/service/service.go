@@ -39,6 +39,7 @@ type Config struct {
 	EnvFile    string   // path to the secrets env file (mode 0600)
 	HealthAddr string   // --health-addr value; "" omits the flag
 	ExtraArgs  []string // extra args appended to `dctl serve`
+	SkipStart  bool     // configure boot-start but don't start now (e.g. token not set yet)
 }
 
 // FileWrite is one file the plan writes. Template files are written only when
@@ -165,7 +166,13 @@ func linuxPlan(c Config) Plan {
 		"WantedBy=default.target\n"
 	cmds := []Command{
 		{Argv: []string{"systemctl", "--user", "daemon-reload"}},
-		{Argv: []string{"systemctl", "--user", "enable", "--now", linuxUnitName}},
+	}
+	if c.SkipStart {
+		// Enable at boot but don't start now: with no token the daemon exits
+		// immediately and Restart=always would crash-loop until it's filled in.
+		cmds = append(cmds, Command{Argv: []string{"systemctl", "--user", "enable", linuxUnitName}})
+	} else {
+		cmds = append(cmds, Command{Argv: []string{"systemctl", "--user", "enable", "--now", linuxUnitName}})
 	}
 	if c.User != "" {
 		// Linger lets the user service keep running after logout / at boot.
@@ -174,7 +181,7 @@ func linuxPlan(c Config) Plan {
 	return Plan{
 		Files:    []FileWrite{{Path: unit, Content: content, Mode: 0o644}, envFileWrite(c)},
 		Commands: cmds,
-		Notes:    []string{"Edit " + c.EnvFile + " with your token, then: systemctl --user restart " + linuxUnitName},
+		Notes:    []string{startNote(c, "systemctl --user start "+linuxUnitName)},
 	}
 }
 
@@ -196,13 +203,19 @@ func macPlan(c Config) Plan {
 		"  <key>StandardOutPath</key><string>" + logPath + "</string>\n" +
 		"  <key>StandardErrorPath</key><string>" + logPath + "</string>\n" +
 		"</dict>\n</plist>\n"
+	cmds := []Command{
+		{Argv: []string{"launchctl", "unload", "-w", plist}, IgnoreErr: true},
+	}
+	if !c.SkipStart {
+		// Skipped when no token yet: loading would start the agent, which exits
+		// immediately and KeepAlive would respawn it. RunAtLoad still starts it
+		// at the next login once the token is in place.
+		cmds = append(cmds, Command{Argv: []string{"launchctl", "load", "-w", plist}})
+	}
 	return Plan{
-		Files: []FileWrite{{Path: plist, Content: content, Mode: 0o644}, envFileWrite(c)},
-		Commands: []Command{
-			{Argv: []string{"launchctl", "unload", "-w", plist}, IgnoreErr: true},
-			{Argv: []string{"launchctl", "load", "-w", plist}},
-		},
-		Notes: []string{"Edit " + c.EnvFile + " with your token, then: launchctl kickstart -k gui/$(id -u)/" + macLabel},
+		Files:    []FileWrite{{Path: plist, Content: content, Mode: 0o644}, envFileWrite(c)},
+		Commands: cmds,
+		Notes:    []string{startNote(c, "launchctl load -w "+plist)},
 	}
 }
 
@@ -231,6 +244,38 @@ const xmlHeader = `<?xml version="1.0" encoding="UTF-8"?>
 func xmlEscape(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 	return r.Replace(s)
+}
+
+// startNote returns the human-facing follow-up after an install: how to start
+// the service once the token is in place (when start was skipped), or where its
+// secrets live (when it's already running).
+func startNote(c Config, startCmd string) string {
+	if c.SkipStart {
+		return "installed and enabled at boot, but NOT started — set DISCORD_BOT_TOKEN in " +
+			c.EnvFile + ", then: " + startCmd
+	}
+	return "running. Secrets live in " + c.EnvFile + "; edit it and restart to change them."
+}
+
+// envFileHasToken reports whether the env file already carries a non-empty
+// DISCORD_BOT_TOKEN, so install can start the service immediately instead of
+// configuring a crash-loop with an empty template.
+func envFileHasToken(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok &&
+			strings.TrimSpace(k) == "DISCORD_BOT_TOKEN" && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // quoteArgv joins a binary path and its args for an ExecStart line, quoting the
@@ -273,6 +318,11 @@ func DefaultConfig() (Config, error) {
 // Install runs the install plan for the current OS: it writes the unit/launcher
 // and secrets template, then enables and starts the service.
 func Install(ctx context.Context, c Config) error {
+	// Without a token the daemon exits immediately; starting it now would just
+	// crash-loop until the user edits the template. Configure boot-start only.
+	if !envFileHasToken(c.EnvFile) {
+		c.SkipStart = true
+	}
 	p, err := BuildPlan(c)
 	if err != nil {
 		return err

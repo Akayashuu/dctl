@@ -32,11 +32,9 @@ func runService(ctx context.Context, args []string) error {
 
 	switch sub {
 	case "install":
-		if err := service.Install(ctx, cfg); err != nil {
-			return err
-		}
-		fmt.Fprintln(os.Stderr, "dctl service: installed and started")
-		return nil
+		// Install prints a Note describing the exact state (started, or enabled
+		// at boot but awaiting a token), so don't assert "started" here.
+		return service.Install(ctx, cfg)
 	case "uninstall":
 		if err := service.Uninstall(ctx, cfg); err != nil {
 			return err

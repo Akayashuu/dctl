@@ -90,8 +90,11 @@ dctl service uninstall # stop and remove it
 Secrets never go into the generated unit: it sources an env file
 (`~/.config/dctl/dctl.env`, mode `0600`) that `install` creates as an empty
 template **only if it doesn't already exist** — it never overwrites your token.
-Fill it in (`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`) and
-restart the service. Install from an installed binary (`go install …`), not
+On a first install (no token yet) the service is **enabled at boot but not
+started**, so it can't crash-loop against an empty template; fill in
+`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`, then start it with
+the command `install` prints. When the token is already present, `install`
+starts it immediately. Install from an installed binary (`go install …`), not
 `go run`, whose executable path is a temporary file.
 
 ## Library
