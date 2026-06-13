@@ -138,6 +138,34 @@ func TestSessionCreateShared(t *testing.T) {
 	}
 }
 
+func TestSessionCreateRejectsUnsafeName(t *testing.T) {
+	for _, name := range []string{"../escape", "a/b", "..", "with space", "bad;rm", ""} {
+		h, d, _, wt, st := newTestHandler(t, dctl.ChannelText)
+		st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+		r := h.Handle(context.Background(), it("owner", "session", "create",
+			dctl.InteractionOption{Name: "name", Value: name}))
+		if !r.Ephemeral || r.Content == "" {
+			t.Fatalf("name %q: expected ephemeral rejection, got %+v", name, r)
+		}
+		if len(wt.created) != 0 || len(d.created) != 0 {
+			t.Fatalf("name %q: nothing should be created on rejection (wt=%v ch=%v)", name, wt.created, d.created)
+		}
+		if _, ok := st.FindSession(name); ok {
+			t.Fatalf("name %q: must not persist a session", name)
+		}
+	}
+}
+
+func TestSessionCreateAcceptsSafeName(t *testing.T) {
+	h, d, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	r := h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "feat_login-2"}))
+	if len(d.created) != 1 {
+		t.Fatalf("safe name should be accepted: %+v / %q", d.created, r.Content)
+	}
+}
+
 func TestSessionCreateRequiresHome(t *testing.T) {
 	h, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
 	r := h.Handle(context.Background(), it("owner", "session", "create",

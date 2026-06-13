@@ -3,10 +3,17 @@ package handler
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/state"
 )
+
+// sessionNameRe constrains a session name to a safe slug: it becomes both a
+// filesystem path (<repo>/.dctl-sessions/<name>) and a git branch
+// (session/<name>), so anything outside this set could traverse directories or
+// forge odd refs even though the caller is allowlisted.
+var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
 // discord is the subset of Client the Handler needs (injected so routing is testable).
 type discord interface {
@@ -112,6 +119,9 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	name, ok := in.Data.Opt("name")
 	if !ok {
 		return errf("missing name")
+	}
+	if !sessionNameRe.MatchString(name) {
+		return errf("invalid name %q — use letters, digits, - or _ (max 64, no /, spaces or ..)", name)
 	}
 	if _, exists := h.st.FindSession(name); exists {
 		return errf("session %q already exists", name)
