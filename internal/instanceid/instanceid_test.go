@@ -55,3 +55,29 @@ func TestSlugify(t *testing.T) {
 		})
 	}
 }
+
+func TestResolve(t *testing.T) {
+	tests := []struct {
+		name     string
+		explicit string
+		owner    string
+		want     string
+		wantErr  bool
+	}{
+		{"explicit-wins", "alice", "343535234303787009", "alice", false},
+		{"explicit-invalid-errors", "Alice!", "12345678", "", true},
+		{"derive-from-owner", "", "343535234303787009", "u03787009", false},
+		{"legacy-no-inputs", "", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Resolve(tt.explicit, tt.owner)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Resolve(%q,%q) err = %v, wantErr %v", tt.explicit, tt.owner, err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("Resolve(%q,%q) = %q, want %q", tt.explicit, tt.owner, got, tt.want)
+			}
+		})
+	}
+}

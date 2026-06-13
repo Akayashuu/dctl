@@ -3,7 +3,10 @@
 // titles) so multiple dctl daemons can share one Discord home.
 package instanceid
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+)
 
 // idRe is the strict slug accepted as an instanceID: lowercase alnum start,
 // then lowercase alnum or '-', total length 1..16. No '_' (so the '__'
@@ -26,4 +29,19 @@ func Slugify(owner string) string {
 		owner = owner[len(owner)-8:]
 	}
 	return "u" + owner
+}
+
+// Resolve computes the instanceID from an explicit id (e.g. DCTL_INSTANCE_ID)
+// and a fallback owner snowflake (e.g. DCTL_OWNER_ID), per Spec §2:
+//  1. explicit, when set, must be a valid slug or Resolve errors;
+//  2. otherwise the owner is slugified;
+//  3. otherwise "" (legacy, non-namespaced mode).
+func Resolve(explicit, owner string) (string, error) {
+	if explicit != "" {
+		if !Validate(explicit) {
+			return "", fmt.Errorf("invalid DCTL_INSTANCE_ID %q: want %s", explicit, idRe.String())
+		}
+		return explicit, nil
+	}
+	return Slugify(owner), nil
 }
