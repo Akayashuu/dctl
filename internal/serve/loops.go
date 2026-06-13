@@ -50,19 +50,30 @@ func pingLoop(ctx context.Context, c *dctl.Client, h *health.Health) {
 	}
 }
 
+// statusContent renders the status embed body. When instanceID is non-empty it
+// is prefixed as "[instanceID] " so daemons sharing a status channel are
+// distinguishable (Spec §6).
+func statusContent(instanceID string, snap health.HealthSnapshot) string {
+	dot, word := "🟢", "online"
+	if !snap.Online {
+		dot, word = "🔴", "offline"
+	}
+	uptime := (time.Duration(snap.UptimeS) * time.Second).String()
+	prefix := ""
+	if instanceID != "" {
+		prefix = "[" + instanceID + "] "
+	}
+	return fmt.Sprintf("%s%s **dctl %s** · uptime %s · ping %dms · %d sessions",
+		prefix, dot, word, uptime, snap.PingMS, snap.Sessions)
+}
+
 // statusLoop maintains a single self-updating status embed in channelID.
-func statusLoop(ctx context.Context, c *dctl.Client, st *state.State, h *health.Health, channelID string) {
+func statusLoop(ctx context.Context, c *dctl.Client, st *state.State, h *health.Health, channelID, instanceID string) {
 	t := time.NewTicker(60 * time.Second)
 	defer t.Stop()
 	render := func() {
 		snap := h.Snapshot(time.Now(), healthWindow)
-		dot, word := "🟢", "online"
-		if !snap.Online {
-			dot, word = "🔴", "offline"
-		}
-		uptime := (time.Duration(snap.UptimeS) * time.Second).String()
-		content := fmt.Sprintf("%s **dctl %s** · uptime %s · ping %dms · %d sessions",
-			dot, word, uptime, snap.PingMS, snap.Sessions)
+		content := statusContent(instanceID, snap)
 		id, err := c.UpsertStatusMessage(ctx, channelID, st.StatusMessageID, content)
 		if err == nil && id != st.StatusMessageID {
 			_ = st.SetStatusMessageID(id)

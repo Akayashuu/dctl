@@ -120,7 +120,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 	go pingLoop(ctx, c, h)
 	if o.StatusChannel != "" {
-		go statusLoop(ctx, c, st, h, o.StatusChannel)
+		go statusLoop(ctx, c, st, h, o.StatusChannel, instID)
 	}
 
 	fmt.Fprintln(os.Stderr, "dctl serve: commands registered; connecting to gateway…")
