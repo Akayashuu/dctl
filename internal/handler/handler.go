@@ -244,17 +244,13 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	repo := repoFor(ws, project)
 	// Worktree isolation by default; shared:true runs in the main checkout.
 	shared := in.Data.OptBool("shared")
-	var worktree, note string
+	var worktree string
 	if !shared {
 		path, err := h.wt.Create(repo, name)
 		if err != nil {
 			return errf("worktree: %v", err)
 		}
-		if path == "" {
-			note = " (shared — not a git repo)"
-		} else {
-			worktree = path
-		}
+		worktree = path // "" means non-git fallback
 	}
 	// Logical name stays the state/worktree key; the qualified name namespaces
 	// the Discord title so daemons sharing a home stay distinguishable (Spec §3).
@@ -284,7 +280,10 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	if err := h.sup.Start(sess); err != nil {
 		return errf("start bridge: %v", err)
 	}
-	return dctl.Response{Content: fmt.Sprintf("✅ Session **%s** running on <#%s>%s.", name, sess.ChannelID, note), Ephemeral: true}
+	banner := sessionBanner(repo, name, worktree, h.wt.Branch(name), cmd, shared)
+	_, _ = h.d.Send(ctx, sess.ChannelID, banner) // best-effort; reply is source of truth
+	reply := fmt.Sprintf("✅ Running on <#%s>.\n\n%s", sess.ChannelID, banner)
+	return dctl.Response{Content: reply, Ephemeral: true}
 }
 
 func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Response {

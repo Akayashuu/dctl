@@ -312,6 +312,125 @@ func TestSessionBannerEmptyRepo(t *testing.T) {
 	}
 }
 
+func TestSessionCreateBanner(t *testing.T) {
+	cases := []struct {
+		name      string
+		homeType  int
+		homeRef   state.HomeRef
+		wtPath    string
+		shared    bool
+		wantReply []string
+		wantSend  []string
+	}{
+		{
+			name:     "category isolated",
+			homeType: dctl.ChannelText,
+			homeRef:  state.HomeRef{ID: "cat1", Type: "category"},
+			wtPath:   "/wt/x",
+			shared:   false,
+			wantReply: []string{
+				"✅ Running on <#new-demo>.",
+				"Mode: isolated worktree",
+				"Worktree: `/wt/x`",
+				"Branch: `session/demo`",
+				"Command: `claude`",
+			},
+			wantSend: []string{"Mode: isolated worktree", "Worktree: `/wt/x`"},
+		},
+		{
+			name:     "category non-git shared",
+			homeType: dctl.ChannelText,
+			homeRef:  state.HomeRef{ID: "cat1", Type: "category"},
+			wtPath:   "",
+			shared:   false,
+			wantReply: []string{
+				"✅ Running on <#new-demo>.",
+				"Mode: shared (not a git repo)",
+			},
+			wantSend: []string{"Mode: shared (not a git repo)"},
+		},
+		{
+			name:     "category shared:true",
+			homeType: dctl.ChannelText,
+			homeRef:  state.HomeRef{ID: "cat1", Type: "category"},
+			wtPath:   "/wt/x",
+			shared:   true,
+			wantReply: []string{
+				"Mode: shared (main checkout)",
+				"Branch: — (runs on current branch)",
+			},
+			wantSend: []string{"Mode: shared (main checkout)"},
+		},
+		{
+			name:     "forum isolated",
+			homeType: dctl.ChannelForum,
+			homeRef:  state.HomeRef{ID: "forum1", Type: "forum"},
+			wtPath:   "/wt/x",
+			shared:   false,
+			wantReply: []string{
+				"✅ Running on <#post-demo>.",
+				"Mode: isolated worktree",
+			},
+			wantSend: []string{"Mode: isolated worktree"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, d, _, wt, _, st := newTestHandler(t, tc.homeType)
+			wt.path = tc.wtPath
+			st.SetHome(tc.homeRef)
+			opts := []dctl.InteractionOption{{Name: "name", Value: "demo"}}
+			if tc.shared {
+				opts = append(opts, dctl.InteractionOption{Name: "shared", Value: true})
+			}
+			r := h.Handle(context.Background(), it("owner", "session", "create", opts...))
+			if !r.Ephemeral {
+				t.Fatalf("reply must be ephemeral: %+v", r)
+			}
+			for _, s := range tc.wantReply {
+				if !strings.Contains(r.Content, s) {
+					t.Errorf("reply missing %q\n--- got ---\n%s", s, r.Content)
+				}
+			}
+			if len(d.sent) != 1 {
+				t.Fatalf("expected exactly one in-channel Send, got %d: %+v", len(d.sent), d.sent)
+			}
+			sess, _ := st.FindSession("demo")
+			if d.sent[0].channelID != sess.ChannelID {
+				t.Errorf("Send went to %q, want session channel %q", d.sent[0].channelID, sess.ChannelID)
+			}
+			for _, s := range tc.wantSend {
+				if !strings.Contains(d.sent[0].content, s) {
+					t.Errorf("in-channel banner missing %q\n--- got ---\n%s", s, d.sent[0].content)
+				}
+			}
+			if strings.Contains(d.sent[0].content, "Running on") {
+				t.Errorf("in-channel banner must not carry the 'Running on' prefix:\n%s", d.sent[0].content)
+			}
+		})
+	}
+}
+
+func TestSessionCreateSendFailureDoesNotFail(t *testing.T) {
+	h, d, sup, _, _, st := newTestHandler(t, dctl.ChannelText)
+	d.sendErr = errors.New("discord 500")
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	r := h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if !strings.Contains(r.Content, "✅ Running on") {
+		t.Fatalf("create must still succeed when Send fails, got: %q", r.Content)
+	}
+	if _, ok := st.FindSession("demo"); !ok {
+		t.Fatal("session must remain persisted despite Send failure")
+	}
+	if len(sup.started) != 1 {
+		t.Fatal("bridge must have started")
+	}
+	if len(d.sent) != 0 {
+		t.Fatalf("no send should be recorded on error, got %+v", d.sent)
+	}
+}
+
 func TestSessionCloseStopsAndArchives(t *testing.T) {
 	h, d, sup, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
