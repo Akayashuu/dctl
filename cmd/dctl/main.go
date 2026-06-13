@@ -51,6 +51,8 @@ func main() {
 		err = runThread(ctx, client, args)
 	case "channel":
 		err = runChannel(ctx, client, args)
+	case "serve":
+		err = runServe(ctx, client, args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -194,7 +196,13 @@ func usage() {
                                               channel, post <forum_id> <title>
                                               <content> a forum thread, delete on
                                               request
+  dctl serve [--health-addr :8787] [--status-channel ID] [--state FILE]
+                                              always-on Gateway daemon: bot online
+                                              24/7, slash commands (/set home,
+                                              /session, /allow), supervises one
+                                              bridge per session
 
 env: DISCORD_BOT_TOKEN (required), DISCORD_CHANNEL_ID (default channel)
+     DCTL_OWNER_ID (seed allowlist), DCTL_STATE_DIR (state dir)
 `)
 }
