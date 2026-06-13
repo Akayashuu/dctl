@@ -15,6 +15,7 @@ import (
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/session"
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 // discordMaxLen is Discord's hard per-message character limit.
@@ -38,7 +39,8 @@ type Options struct {
 	Interval int
 	State    string
 	After    string
-	Verbose  bool
+	Participants string // append-only journal of message authors (empty = disabled)
+	Verbose      bool
 }
 
 // Run links the channel to the command until ctx is cancelled.
@@ -102,6 +104,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			if m.Author.Bot {
 				continue // never answer a bot (incl. ourselves) → no loops
 			}
+			recordParticipant(o.Participants, m.Author.ID)
 			logf(o.Verbose, "<%s> %s", m.Author.Username, oneline(m.Content))
 			// Acknowledge immediately so the human sees the message was picked
 			// up while the (slow) command runs. Best-effort: ignore if the bot
@@ -158,6 +161,13 @@ func persist(path, id string) {
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	_ = os.WriteFile(path, []byte(id+"\n"), 0o644)
+}
+
+// recordParticipant best-effort appends a human author id to the journal so the
+// daemon can answer /session who. Errors are swallowed: observability must never
+// break the bridge loop.
+func recordParticipant(path, userID string) {
+	_, _ = state.AppendParticipant(path, userID)
 }
 
 // chunk splits s into pieces no longer than max, preferring to break on a
