@@ -45,6 +45,8 @@ func main() {
 		err = runWatch(ctx, client, args)
 	case "bridge":
 		err = runBridge(ctx, client, args)
+	case "react":
+		err = runReact(ctx, client, args)
 	case "thread":
 		err = runThread(ctx, client, args)
 	case "channel":
@@ -132,6 +134,17 @@ func runWatch(ctx context.Context, c *dctl.Client, args []string) error {
 	}
 }
 
+func runReact(ctx context.Context, c *dctl.Client, args []string) error {
+	fs := flag.NewFlagSet("react", flag.ExitOnError)
+	ch := channelFlag(fs)
+	fs.Parse(args)
+	rest := fs.Args()
+	if len(rest) < 2 {
+		return fmt.Errorf("usage: dctl react [-c CHANNEL] <message_id> <emoji>")
+	}
+	return c.React(ctx, *ch, rest[0], rest[1])
+}
+
 func runThread(ctx context.Context, c *dctl.Client, args []string) error {
 	fs := flag.NewFlagSet("thread", flag.ExitOnError)
 	ch := channelFlag(fs)
@@ -174,6 +187,7 @@ func usage() {
                                               link the channel to a command:
                                               run it per human message, post its
                                               stdout back (e.g. a Claude session)
+  dctl react  [-c CHANNEL] <message_id> <emoji>  add a reaction (e.g. 👀)
   dctl thread [-c CHANNEL] <message_id> <name>  open a real thread off a message
   dctl channel <list|create|post|delete|ensure> [args] [--guild ID]
                                               manage channels: create [--forum] a

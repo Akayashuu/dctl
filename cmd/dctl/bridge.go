@@ -17,6 +17,14 @@ import (
 // discordMaxLen is Discord's hard per-message character limit.
 const discordMaxLen = 2000
 
+// Reaction marks the bridge puts on a human message: ack on pickup, swapped for
+// done/fail once the command finishes.
+const (
+	ackEmoji  = "👀"
+	doneEmoji = "✅"
+	failEmoji = "⚠️"
+)
+
 // runBridge links a channel to an external command: it watches for new human
 // messages and, for each, runs `--cmd` with the message text, then posts the
 // command's stdout back as a threaded reply. The canonical use is binding a
@@ -34,7 +42,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	ensure := fs.String("ensure", "prospector", "if no channel is set, create/reuse a channel with this name")
 	interval := fs.Int("i", 5, "poll interval in seconds")
 	state := fs.String("state", "", "file to persist the last-seen message id across restarts")
-	after := fs.String("after", "", "start after this id (overrides state file)")
+	after := fs.String("after", "", "seed start id for the first run (state file wins once it exists)")
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	fs.Parse(args)
 
@@ -56,11 +64,17 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		logf(true, "no default channel — using #%s (%s)", created.Name, created.ID)
 	}
 
-	last := *after
-	if last == "" && *state != "" {
+	// The persisted state file is authoritative: a restart resumes exactly where
+	// it left off, never replaying messages it already handled. --after only
+	// seeds the very first run (before any state exists).
+	var last string
+	if *state != "" {
 		if b, err := os.ReadFile(*state); err == nil {
 			last = strings.TrimSpace(string(b))
 		}
+	}
+	if last == "" {
+		last = *after
 	}
 	// No baseline yet → anchor on the latest message so we don't replay history.
 	if last == "" {
@@ -84,12 +98,18 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 				continue // never answer a bot (incl. ourselves) → no loops
 			}
 			logf(*verbose, "<%s> %s", m.Author.Username, oneline(m.Content))
+			// Acknowledge immediately so the human sees the message was picked
+			// up while the (slow) command runs. Best-effort: ignore if the bot
+			// lacks Add Reactions.
+			_ = c.React(ctx, *ch, m.ID, ackEmoji)
 			out, err := runCmd(ctx, *cmdStr, m)
 			if err != nil && out == "" {
 				out = "⚠️ " + err.Error()
 			}
 			out = strings.TrimSpace(out)
 			if out == "" {
+				_ = c.Unreact(ctx, *ch, m.ID, ackEmoji)
+				_ = c.React(ctx, *ch, m.ID, failEmoji)
 				continue
 			}
 			for _, chunk := range chunk(out, discordMaxLen) {
@@ -97,6 +117,9 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 					logf(true, "reply error: %v", err)
 				}
 			}
+			// Swap the "seen" mark for a "done" mark once the answer is posted.
+			_ = c.Unreact(ctx, *ch, m.ID, ackEmoji)
+			_ = c.React(ctx, *ch, m.ID, doneEmoji)
 		}
 		time.Sleep(time.Duration(*interval) * time.Second)
 	}
