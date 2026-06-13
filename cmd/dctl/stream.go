@@ -1,0 +1,287 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"sync"
+)
+
+// newResponder selects the response strategy. stream=true (default) keeps a
+// persistent claude stream-json process; stream=false runs oneShot per message.
+func newResponder(ctx context.Context, stream bool, cmdStr, model string, oneShot func(context.Context, dctlMessage) (string, error)) responder {
+	if !stream {
+		return &oneShotResponder{run: oneShot}
+	}
+	return &streamResponder{ctx: ctx, base: streamBase(strings.Fields(cmdStr)), model: model}
+}
+
+// streamBase normalizes a base command for persistent stream-json mode by
+// dropping flags that collide with it. A session persisted before stream mode
+// carries the old default ("claude -p --continue"); streamArgv adds its own -p
+// and the stream-format flags, so the legacy -p/--print/--continue must go or
+// the process launches with a duplicate -p and a conflicting --continue.
+func streamBase(fields []string) []string {
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		switch f {
+		case "-p", "--print", "--continue":
+			continue
+		}
+		out = append(out, f)
+	}
+	if len(out) == 0 {
+		return []string{"claude"}
+	}
+	return out
+}
+
+// userLine marshals one Claude Code stream-json user message, newline-terminated
+// for writing to the process stdin.
+func userLine(text string) ([]byte, error) {
+	msg := map[string]any{
+		"type": "user",
+		"message": map[string]any{
+			"role":    "user",
+			"content": text,
+		},
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
+}
+
+// turnResult is the outcome of one assistant turn, parsed from the stream's
+// terminal `result` event.
+type turnResult struct {
+	Text      string
+	CostUSD   float64
+	SessionID string
+	IsError   bool
+	ErrMsg    string
+}
+
+// streamEvent is the subset of a stream-json line we care about. The `result`
+// event terminates a turn and carries the final assembled text + cost.
+type streamEvent struct {
+	Type         string  `json:"type"`
+	SessionID    string  `json:"session_id"`
+	IsError      bool    `json:"is_error"`
+	Result       string  `json:"result"`
+	TotalCostUSD float64 `json:"total_cost_usd"`
+}
+
+// readTurn consumes stream-json events until the terminal `result` event,
+// ignoring everything else. It uses ReadBytes (not bufio.Scanner) because the
+// system/init event embeds the full skill injection and can exceed Scanner's
+// 64 KB token cap.
+func readTurn(r *bufio.Reader) (turnResult, error) {
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(line) > 0 {
+			var ev streamEvent
+			if json.Unmarshal(line, &ev) == nil && ev.Type == "result" {
+				tr := turnResult{
+					Text:      ev.Result,
+					CostUSD:   ev.TotalCostUSD,
+					SessionID: ev.SessionID,
+					IsError:   ev.IsError,
+				}
+				if ev.IsError {
+					tr.ErrMsg = ev.Result
+				}
+				return tr, nil
+			}
+		}
+		if err != nil {
+			return turnResult{}, err
+		}
+	}
+}
+
+// streamSession wraps a live `claude` stream-json process: one turn at a time
+// (serialized by mu), writing user messages to stdin and reading turns off
+// stdout. In tests the io pair is injected directly; in production Start wires
+// it to a real subprocess.
+type streamSession struct {
+	mu     sync.Mutex
+	stdin  io.WriteCloser
+	out    *bufio.Reader
+	cmd    *exec.Cmd // nil when the io pair is injected (tests)
+	sessID string    // last session id seen, for --resume on restart
+}
+
+// newStreamSession builds a session over an arbitrary io pair (used by tests and
+// by Start once it has the process pipes).
+func newStreamSession(stdin io.WriteCloser, out io.Reader) *streamSession {
+	return &streamSession{stdin: stdin, out: bufio.NewReader(out)}
+}
+
+// streamArgv builds the claude argv for persistent stream-json mode: the base
+// command (e.g. ["claude"], possibly with extra user args) followed by the
+// stream flags, plus --model / --resume when provided.
+func streamArgv(base []string, model, resumeID string) []string {
+	argv := append([]string{}, base...)
+	argv = append(argv, "-p",
+		"--input-format", "stream-json",
+		"--output-format", "stream-json",
+		"--verbose")
+	if model != "" {
+		argv = append(argv, "--model", model)
+	}
+	if resumeID != "" {
+		argv = append(argv, "--resume", resumeID)
+	}
+	return argv
+}
+
+// startStreamSession launches a real `claude` stream-json process in dir and
+// returns a session wired to its stdin/stdout.
+func startStreamSession(ctx context.Context, base []string, model, resumeID, dir string) (*streamSession, error) {
+	argv := streamArgv(base, model, resumeID)
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Dir = dir
+	cmd.Env = os.Environ()
+	cmd.Stderr = os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	s := newStreamSession(stdin, stdout)
+	s.cmd = cmd
+	s.sessID = resumeID
+	return s, nil
+}
+
+// Send writes one user message and reads back the full assistant turn. An error
+// means the stream closed (process died) — the caller should restart.
+func (s *streamSession) Send(text string) (turnResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	line, err := userLine(text)
+	if err != nil {
+		return turnResult{}, err
+	}
+	if _, err := s.stdin.Write(line); err != nil {
+		return turnResult{}, err
+	}
+	tr, err := readTurn(s.out)
+	if err != nil {
+		return tr, err
+	}
+	if tr.SessionID != "" {
+		s.sessID = tr.SessionID
+	}
+	return tr, nil
+}
+
+// responder turns one Discord message into a reply string. Two implementations:
+// a persistent stream-json claude session, or a per-message one-shot command.
+type responder interface {
+	Respond(ctx context.Context, m dctlMessage) (string, error)
+	Close() error
+}
+
+// dctlMessage is the minimal message shape the responders need (decoupled from
+// the discord package so stream.go stays import-light; runBridge adapts).
+type dctlMessage struct {
+	Content   string
+	Author    string
+	MessageID string
+	ChannelID string
+}
+
+// oneShotResponder runs cmdStr fresh for every message (legacy behavior, used
+// for arbitrary non-claude commands when --stream=false).
+type oneShotResponder struct{ run func(ctx context.Context, m dctlMessage) (string, error) }
+
+func (o *oneShotResponder) Respond(ctx context.Context, m dctlMessage) (string, error) {
+	return o.run(ctx, m)
+}
+func (o *oneShotResponder) Close() error { return nil }
+
+// streamResponder keeps one persistent claude stream-json process alive across
+// messages. On process death it restarts with --resume and retries once.
+type streamResponder struct {
+	ctx   context.Context
+	base  []string
+	model string
+	dir   string
+	mu    sync.Mutex
+	sess  *streamSession
+}
+
+func (r *streamResponder) Respond(ctx context.Context, m dctlMessage) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sess == nil {
+		s, err := startStreamSession(r.ctx, r.base, r.model, "", r.dir)
+		if err != nil {
+			return "", err
+		}
+		r.sess = s
+	}
+	tr, err := r.sess.Send(m.Content)
+	if err != nil {
+		// Process likely died: restart with the last session id and retry once.
+		resume := r.sess.sessID
+		_ = r.sess.Close()
+		s, startErr := startStreamSession(r.ctx, r.base, r.model, resume, r.dir)
+		if startErr != nil {
+			return "", startErr
+		}
+		r.sess = s
+		if tr, err = r.sess.Send(m.Content); err != nil {
+			return "", err
+		}
+	}
+	if tr.IsError {
+		return tr.Text, errFromTurn(tr)
+	}
+	return tr.Text, nil
+}
+
+func (r *streamResponder) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.sess != nil {
+		return r.sess.Close()
+	}
+	return nil
+}
+
+func errFromTurn(tr turnResult) error {
+	if tr.ErrMsg != "" {
+		return &turnError{tr.ErrMsg}
+	}
+	return &turnError{"claude reported an error"}
+}
+
+type turnError struct{ msg string }
+
+func (e *turnError) Error() string { return e.msg }
+
+// Close stops the session: closes stdin and kills the process if any.
+func (s *streamSession) Close() error {
+	if s.stdin != nil {
+		_ = s.stdin.Close()
+	}
+	if s.cmd != nil && s.cmd.Process != nil {
+		_ = s.cmd.Process.Kill()
+		_ = s.cmd.Wait() // reap so a killed session doesn't leak a zombie on restart
+	}
+	return nil
+}

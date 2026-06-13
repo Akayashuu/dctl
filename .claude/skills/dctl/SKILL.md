@@ -43,6 +43,8 @@ sole server.
 `dctl serve` is a long-running daemon that holds a **Gateway (websocket)**
 connection, so the bot shows as **online 24/7** and exposes native **slash
 commands**. It supervises one bridged process (Claude by default) per "session".
+Each bridge keeps a **persistent `claude` stream-json process** (context stays
+hot; startup overhead paid once, not per message).
 
 ```bash
 DCTL_OWNER_ID=<your_user_id> dctl serve [--health-addr :8787] [--status-channel <id>]

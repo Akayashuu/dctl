@@ -47,25 +47,32 @@ messages newer than `<id>` — feed back the last id you saw to poll.
 ## Bind a Claude session to a channel
 
 `dctl bridge` watches a channel and, for each **human** message (bot messages
-are skipped, so it never answers itself), runs a command and posts its stdout
-back as a threaded reply. Point it at a persistent Claude session and the channel
-becomes a chat with Claude:
+are skipped, so it never answers itself), turns it into a reply posted back as a
+threaded reply. The channel becomes a chat with Claude:
 
 ```sh
-dctl bridge --cmd 'claude -p --continue' --state ~/.local/state/dctl/bridge.last
+dctl bridge --state ~/.local/state/dctl/bridge.last
 ```
 
-`--continue` keeps **one** conversation across messages (shared context). The
-message text reaches the command three ways — appended as the last arg, piped on
-stdin, and as env vars `DCTL_MSG` / `DCTL_AUTHOR` / `DCTL_MESSAGE_ID` /
-`DCTL_CHANNEL` — so a wrapper script can do anything. `--state FILE` persists the
-last-seen id so a restart doesn't replay history. Replies over Discord's 2000-char
-limit are chunked.
+By default the bridge holds **one persistent `claude` process** per session in
+Claude Code's stream-json mode (`-p --input-format stream-json --output-format
+stream-json --verbose`). The context stays hot across messages, so the large
+startup overhead (system prompt + tools) is paid **once**, not on every message.
+Pick a model with `--model claude-haiku-4-5-20251001`; pass extra claude args via
+`--cmd 'claude --permission-mode acceptEdits'`.
+
+For an arbitrary per-message command instead (the legacy one-shot behavior), use
+`--stream=false --cmd '<program>'`: the message text reaches it three ways —
+appended as the last arg, piped on stdin, and as env vars `DCTL_MSG` /
+`DCTL_AUTHOR` / `DCTL_MESSAGE_ID` / `DCTL_CHANNEL`.
+
+`--state FILE` persists the last-seen id so a restart doesn't replay history.
+Replies over Discord's 2000-char limit are chunked.
 
 Run it permanently two ways:
 
 - **systemd (survives reboot/logout):** see [`contrib/dctl-bridge.service`](contrib/dctl-bridge.service).
-- **background (quick test):** `nohup dctl bridge --cmd 'claude -p --continue' -v &`
+- **background (quick test):** `nohup dctl bridge -v &`
 
 ## Library
 
