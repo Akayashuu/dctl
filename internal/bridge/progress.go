@@ -28,6 +28,7 @@ type progressView struct {
 	counts   map[string]int
 	order    []string // tool names in first-seen order, for the summary
 	cost     float64
+	actions  int // running count of tool events, for the summary
 	msgID    string
 	lastEdit time.Time
 	dirty    bool
@@ -50,6 +51,7 @@ func (p *progressView) add(ev session.Event) {
 		p.lines = nil
 		p.order = nil
 		p.cost = 0
+		p.actions = 0
 		p.counts = map[string]int{}
 		return
 	case "text":
@@ -62,6 +64,7 @@ func (p *progressView) add(ev session.Event) {
 			p.order = append(p.order, ev.Tool)
 		}
 		p.counts[ev.Tool]++
+		p.actions++
 		line := emojiFor(ev.Tool) + " " + ev.Tool
 		if d := clip(flatten(ev.Detail), 120); d != "" {
 			line += " · " + d
@@ -100,7 +103,7 @@ func (p *progressView) finish(failed bool) {
 		// that streamed activity then got reset on a mid-turn restart), collapse
 		// it to a summary so it isn't left stuck on "⏳ en cours…".
 		if p.msgID != "" && p.post != nil {
-			p.post(p.msgID, p.summary(failed))
+			_, _ = p.post(p.msgID, p.summary(failed))
 		}
 		return
 	}
@@ -110,7 +113,7 @@ func (p *progressView) finish(failed bool) {
 		return
 	}
 	if p.post != nil {
-		p.post(p.msgID, p.summary(failed))
+		_, _ = p.post(p.msgID, p.summary(failed))
 	}
 }
 
@@ -131,10 +134,6 @@ func (p *progressView) summary(failed bool) string {
 	if failed {
 		icon = "⚠️"
 	}
-	total := 0
-	for _, n := range p.counts {
-		total += n
-	}
 	parts := make([]string, 0, len(p.order))
 	for _, name := range p.order {
 		if n := p.counts[name]; n > 1 {
@@ -146,15 +145,15 @@ func (p *progressView) summary(failed bool) string {
 	// A turn can finish with no tool actions (e.g. pure reasoning/text in full
 	// mode): report it as done rather than the misleading "0 actions".
 	var s string
-	if total == 0 {
+	if p.actions == 0 {
 		s = icon + " terminé"
 	} else {
-		s = fmt.Sprintf("%s %d action%s", icon, total, plural(total))
+		s = fmt.Sprintf("%s %d action%s", icon, p.actions, plural(p.actions))
 		if len(parts) > 0 {
 			s += " (" + strings.Join(parts, ", ") + ")"
 		}
 	}
-	s += fmt.Sprintf(" · %ds", int(time.Since(p.start).Round(time.Second)/time.Second))
+	s += fmt.Sprintf(" · %ds", int(time.Since(p.start).Round(time.Second).Seconds()))
 	if p.cost > 0 {
 		s += " · " + formatCost(p.cost)
 	}
