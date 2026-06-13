@@ -30,14 +30,14 @@ const (
 
 // Options configures one bridge run (parsed from CLI flags by cmd/dctl).
 type Options struct {
-	Channel  string
-	Cmd      string
-	Stream   bool
-	Model    string
-	Ensure   string
-	Interval int
-	State    string
-	After    string
+	Channel      string
+	Cmd          string
+	Stream       bool
+	Model        string
+	Ensure       string
+	Interval     int
+	State        string
+	After        string
 	Verbose      bool
 	Progress     string // "off" | "actions" | "full" (default "full")
 	ProgressKeep bool   // keep the full running list instead of collapsing to a summary
