@@ -37,6 +37,8 @@ dctl send  "hello"                  # -> prints the new message id
 dctl reply <message_id> "ok"        # -> prints the reply id
 dctl read  -n 20 [--after <id>]     # -> "<id>\t<author>\t<content>" per line
 dctl watch -i 10 [--after <id>]     # -> stream new messages forever
+dctl react  <message_id> 👀         # -> add a reaction (needs Add Reactions)
+dctl thread <message_id> "name"     # -> open a real thread off a message, prints thread id
 ```
 
 `read`/`watch` print oldest-first (chronological). `--after <id>` returns only
@@ -84,12 +86,18 @@ feature is on.
 dctl channel list                 # id  type  name  (per line)
 dctl channel create prospection   # -> new channel id
 dctl channel ensure prospector    # -> id (existing by that name, or created)
+dctl channel create plaza --forum # -> new forum channel id
+dctl channel post <forum_id> "title" "body"  # -> new forum post (thread) id
 dctl channel delete <channel_id>  # remove a channel
 ```
 
 Guild defaults to the bot's sole server (mono-server); pass `--guild <id>` to
 target another. `dctl bridge` calls `ensure` automatically when no channel is
 configured, so it always has somewhere to talk.
+
+Creating/deleting channels and forum posts needs the bot's **Manage Channels**
+permission (invite perms `68624`); reactions need **Add Reactions**. Plain
+send/reply/read only need `68608`.
 
 ## License
 
