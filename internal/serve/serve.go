@@ -61,7 +61,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	if repo == "" {
 		repo, _ = os.Getwd()
 	}
-	wt := worktree.NewWorktreer(ctx, repo)
+	wt := worktree.NewWorktreer(ctx, repo, st.InstanceID)
 	hdl := handler.NewHandler(c, sup, wt, st, o.DefaultCmd)
 
 	if err := c.RegisterCommands(ctx); err != nil {
