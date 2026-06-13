@@ -71,13 +71,19 @@ type Handler struct {
 	fg         forges
 	st         *state.State
 	defaultCmd string
+	partDir    string // dir holding participants/<name>.log journals
 }
 
 // NewHandler builds a Handler. defaultCmd is the bridge command used when a
 // session is created without an explicit cmd (e.g. "claude -p --continue").
-func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, st *state.State, defaultCmd string) *Handler {
-	return &Handler{d: d, sup: sup, wt: wt, fg: fg, st: st, defaultCmd: defaultCmd}
+// partDir is the directory under which per-session participant journals live
+// (participants/<name>.log).
+func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, st *state.State, defaultCmd, partDir string) *Handler {
+	return &Handler{d: d, sup: sup, wt: wt, fg: fg, st: st, defaultCmd: defaultCmd, partDir: partDir}
 }
+
+// PartDir returns the participants journal directory (used by tests/wiring).
+func (h *Handler) PartDir() string { return h.partDir }
 
 func deny() dctl.Response { return dctl.Response{Content: "⛔ Not authorized.", Ephemeral: true} }
 func errf(f string, a ...any) dctl.Response {
@@ -190,6 +196,11 @@ func (h *Handler) setWorkspace(in dctl.Interaction) dctl.Response {
 }
 
 func (h *Handler) handleSession(ctx context.Context, in dctl.Interaction) dctl.Response {
+	// The "allow" sub-command group is type 2, which Subcommand() (type-1 only)
+	// does not surface; detect it explicitly.
+	if allowAction(in.Data.Options) != "" {
+		return h.sessionAllow(in)
+	}
 	sub, _ := in.Data.Subcommand()
 	switch sub {
 	case "create":
@@ -198,6 +209,8 @@ func (h *Handler) handleSession(ctx context.Context, in dctl.Interaction) dctl.R
 		return h.sessionClose(ctx, in)
 	case "list":
 		return h.sessionList()
+	case "who":
+		return h.sessionWho(in)
 	default:
 		return errf("unknown /session subcommand")
 	}
@@ -322,6 +335,103 @@ func (h *Handler) sessionList() dctl.Response {
 		out += fmt.Sprintf("• **%s** (%s) <#%s>\n", s.Name, s.Type, s.ChannelID)
 	}
 	return dctl.Response{Content: out, Ephemeral: true}
+}
+
+// sessionAllow routes /session allow add|remove|list. The option group is the
+// SUB_COMMAND_GROUP "allow"; its single child SUB_COMMAND is the action.
+func (h *Handler) sessionAllow(in dctl.Interaction) dctl.Response {
+	action := allowAction(in.Data.Options)
+	name, ok := in.Data.Opt("name")
+	if !ok {
+		return errf("missing name")
+	}
+	if _, exists := h.st.FindSession(name); !exists {
+		return errf("no session %q", name)
+	}
+	switch action {
+	case "add":
+		id, ok := in.Data.Opt("user")
+		if !ok {
+			return errf("missing user")
+		}
+		id = normalizeUserID(id)
+		added, err := h.st.AddSessionAllow(name, id)
+		if err != nil {
+			return errf("%v", err)
+		}
+		if !added {
+			return dctl.Response{Content: fmt.Sprintf("<@%s> already allowed on **%s**.", id, name), Ephemeral: true}
+		}
+		return dctl.Response{Content: fmt.Sprintf("✅ <@%s> allowed on **%s**.", id, name), Ephemeral: true}
+	case "remove":
+		id, ok := in.Data.Opt("user")
+		if !ok {
+			return errf("missing user")
+		}
+		id = normalizeUserID(id)
+		removed, err := h.st.RemoveSessionAllow(name, id)
+		if err != nil {
+			return errf("%v", err)
+		}
+		if !removed {
+			return dctl.Response{Content: fmt.Sprintf("<@%s> was not in **%s**'s allowlist.", id, name), Ephemeral: true}
+		}
+		return dctl.Response{Content: fmt.Sprintf("✅ <@%s> removed from **%s**.", id, name), Ephemeral: true}
+	case "list":
+		ids := h.st.SessionAllowlist(name)
+		if len(ids) == 0 {
+			return dctl.Response{Content: fmt.Sprintf("**%s** has no per-session allowlist (the global allowlist still applies).", name), Ephemeral: true}
+		}
+		out := fmt.Sprintf("Per-session allowlist for **%s** (plus the global allowlist):\n", name)
+		for _, id := range ids {
+			out += fmt.Sprintf("• <@%s>\n", id)
+		}
+		return dctl.Response{Content: out, Ephemeral: true}
+	default:
+		return errf("unknown /session allow action")
+	}
+}
+
+// sessionWho lists observed participants (journal) for the session.
+func (h *Handler) sessionWho(in dctl.Interaction) dctl.Response {
+	name, ok := in.Data.Opt("name")
+	if !ok {
+		return errf("missing name")
+	}
+	if _, exists := h.st.FindSession(name); !exists {
+		return errf("no session %q", name)
+	}
+	ids := state.ReadParticipants(state.ParticipantsPath(h.partDir, name))
+	if len(ids) == 0 {
+		return dctl.Response{Content: "Personne n'a encore écrit dans cette session.", Ephemeral: true}
+	}
+	out := fmt.Sprintf("Participants observed in **%s**:\n", name)
+	for _, id := range ids {
+		out += fmt.Sprintf("• <@%s>\n", id)
+	}
+	return dctl.Response{Content: out, Ephemeral: true}
+}
+
+// allowAction returns the SUB_COMMAND name nested in the "allow" group.
+func allowAction(opts []dctl.InteractionOption) string {
+	for _, o := range opts {
+		if o.Name == "allow" && o.Type == 2 { // SUB_COMMAND_GROUP
+			for _, c := range o.Options {
+				if c.Type == 1 { // SUB_COMMAND
+					return c.Name
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// normalizeUserID strips a Discord mention wrapper (<@id> / <@!id>) to the bare id.
+func normalizeUserID(s string) string {
+	s = strings.TrimPrefix(s, "<@")
+	s = strings.TrimPrefix(s, "!")
+	s = strings.TrimSuffix(s, ">")
+	return s
 }
 
 func (h *Handler) handleWorkspace(ctx context.Context, in dctl.Interaction) dctl.Response {

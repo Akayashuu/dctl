@@ -105,7 +105,7 @@ func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSu
 	fg := &fakeForge{gh: true}
 	st := state.NewState(t.TempDir() + "/s.json")
 	st.AddAllow("owner")
-	return NewHandler(d, sup, wt, fg, st, "claude"), d, sup, wt, fg, st
+	return NewHandler(d, sup, wt, fg, st, "claude", t.TempDir()), d, sup, wt, fg, st
 }
 
 func it(user, cmd string, sub string, opts ...dctl.InteractionOption) dctl.Interaction {
@@ -741,5 +741,77 @@ func TestWorkspaceRemotesNoForge(t *testing.T) {
 	r := h.Handle(context.Background(), it("owner", "workspace", "remotes"))
 	if !strings.Contains(r.Content, "gh/glab") {
 		t.Fatalf("expected no-forge message, got %q", r.Content)
+	}
+}
+
+// itGroup builds an interaction for a sub-command GROUP (type 2) → sub (type 1).
+func itGroup(user, cmd, group, sub string, opts ...dctl.InteractionOption) dctl.Interaction {
+	inner := dctl.InteractionOption{Name: sub, Type: 1, Options: opts}
+	data := dctl.InteractionData{
+		Name:    cmd,
+		Options: []dctl.InteractionOption{{Name: group, Type: 2, Options: []dctl.InteractionOption{inner}}},
+	}
+	return dctl.Interaction{Member: dctl.Member{User: dctl.Author{ID: user}}, Data: data}
+}
+
+func TestSessionAllowAddListRemove(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.AddSession(state.Session{Name: "demo", ChannelID: "c1", Type: "text"})
+
+	r := h.Handle(context.Background(), itGroup("owner", "session", "allow", "add",
+		dctl.InteractionOption{Name: "name", Value: "demo"},
+		dctl.InteractionOption{Name: "user", Value: "u1"}))
+	if r.Content == "" || !r.Ephemeral {
+		t.Fatalf("expected ephemeral confirmation, got %+v", r)
+	}
+	if !st.SessionAllowed("demo", "u1") {
+		t.Fatal("u1 should now be allowed on demo")
+	}
+
+	r = h.Handle(context.Background(), itGroup("owner", "session", "allow", "list",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if !strings.Contains(r.Content, "u1") {
+		t.Fatalf("list should mention u1: %q", r.Content)
+	}
+
+	h.Handle(context.Background(), itGroup("owner", "session", "allow", "remove",
+		dctl.InteractionOption{Name: "name", Value: "demo"},
+		dctl.InteractionOption{Name: "user", Value: "u1"}))
+	if st.SessionAllowed("demo", "u1") {
+		t.Fatal("u1 should be removed")
+	}
+}
+
+func TestSessionAllowMissingSession(t *testing.T) {
+	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
+	r := h.Handle(context.Background(), itGroup("owner", "session", "allow", "add",
+		dctl.InteractionOption{Name: "name", Value: "ghost"},
+		dctl.InteractionOption{Name: "user", Value: "u1"}))
+	if !r.Ephemeral || !strings.Contains(r.Content, "ghost") {
+		t.Fatalf("expected ephemeral 'no session' error, got %+v", r)
+	}
+}
+
+func TestSessionWhoListsParticipants(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.AddSession(state.Session{Name: "demo", ChannelID: "c1", Type: "text"})
+	jp := state.ParticipantsPath(h.PartDir(), "demo")
+	state.AppendParticipant(jp, "h1")
+	state.AppendParticipant(jp, "h2")
+
+	r := h.Handle(context.Background(), it("owner", "session", "who",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if !strings.Contains(r.Content, "h1") || !strings.Contains(r.Content, "h2") {
+		t.Fatalf("who should list both participants: %q", r.Content)
+	}
+}
+
+func TestSessionWhoEmpty(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.AddSession(state.Session{Name: "demo", ChannelID: "c1", Type: "text"})
+	r := h.Handle(context.Background(), it("owner", "session", "who",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if !strings.Contains(r.Content, "Personne") {
+		t.Fatalf("empty who should say nobody wrote yet: %q", r.Content)
 	}
 }
