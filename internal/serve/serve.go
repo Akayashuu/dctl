@@ -76,6 +76,26 @@ func resolveInstanceID(st *state.State, optID, ownerID string) (string, error) {
 	return resolved, nil
 }
 
+// handleDeferred acks a slow interaction immediately (type 5), runs the handler
+// off the dispatch loop, then edits the deferred reply in. On a defer failure it
+// falls back to a direct reply so the user is never left without a response.
+func handleDeferred(ctx context.Context, c *dctl.Client, hdl *handler.Handler, h *health.Health, st *state.State, appID string, in dctl.Interaction) {
+	if err := c.DeferInteraction(ctx, in.ID, in.Token, true); err != nil {
+		fmt.Fprintf(os.Stderr, "defer: %v\n", err)
+		resp := hdl.Handle(ctx, in)
+		if err := c.RespondInteraction(ctx, in.ID, in.Token, resp); err != nil {
+			fmt.Fprintf(os.Stderr, "respond: %v\n", err)
+		}
+		h.SetSessions(len(st.SnapshotSessions()))
+		return
+	}
+	resp := hdl.Handle(ctx, in)
+	if err := c.EditInteractionResponse(ctx, appID, in.Token, resp); err != nil {
+		fmt.Fprintf(os.Stderr, "edit response: %v\n", err)
+	}
+	h.SetSessions(len(st.SnapshotSessions()))
+}
+
 // Run is the always-on Gateway daemon (gateway + supervisor + liveness).
 func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	h := health.NewHealth(time.Now())
@@ -115,6 +135,11 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)
 	}
+	// Needed to edit deferred interaction replies (webhook @original).
+	appID, err := c.AppID(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve app id: %w", err)
+	}
 
 	if o.HealthAddr != "" {
 		go serveHealth(ctx, o.HealthAddr, h)
@@ -135,11 +160,17 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 		for {
 			select {
 			case in := <-gw.Interactions:
-				resp := hdl.Handle(ctx, in)
-				if err := c.RespondInteraction(ctx, in.ID, in.Token, resp); err != nil {
-					fmt.Fprintf(os.Stderr, "respond: %v\n", err)
+				if hdl.Slow(in) {
+					// Ack within 3s, then do the slow work and edit the reply in
+					// off the dispatch loop so one clone can't stall the daemon.
+					go handleDeferred(ctx, c, hdl, h, st, appID, in)
+				} else {
+					resp := hdl.Handle(ctx, in)
+					if err := c.RespondInteraction(ctx, in.ID, in.Token, resp); err != nil {
+						fmt.Fprintf(os.Stderr, "respond: %v\n", err)
+					}
+					h.SetSessions(len(st.SnapshotSessions())) // session count may have changed
 				}
-				h.SetSessions(len(st.SnapshotSessions())) // session count may have changed
 			case err := <-errCh:
 				fmt.Fprintf(os.Stderr, "gateway closed (%v); reconnecting in 3s…\n", err)
 				select {

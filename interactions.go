@@ -210,6 +210,37 @@ func (c *Client) RespondInteraction(ctx context.Context, id, token string, r Res
 	return c.do(req, nil)
 }
 
+// DeferInteraction acknowledges an interaction with a DEFERRED_CHANNEL_MESSAGE_
+// WITH_SOURCE (type 5) so the daemon has up to 15 minutes to produce the real
+// reply (slow clones/network) instead of Discord's 3s callback deadline. The
+// ephemeral flag must match the eventual reply's visibility.
+func (c *Client) DeferInteraction(ctx context.Context, id, token string, ephemeral bool) error {
+	data := map[string]any{}
+	if ephemeral {
+		data["flags"] = 1 << 6 // EPHEMERAL
+	}
+	body := map[string]any{"type": 5, "data": data}
+	req, err := c.newRequest(ctx, http.MethodPost,
+		"/interactions/"+id+"/"+token+"/callback", body)
+	if err != nil {
+		return err
+	}
+	return c.do(req, nil)
+}
+
+// EditInteractionResponse fills in the deferred reply by editing the original
+// interaction response via the webhook endpoint. appID is the bot's application
+// id (see AppID); the interaction token authorizes the edit for ~15 minutes.
+func (c *Client) EditInteractionResponse(ctx context.Context, appID, token string, r Response) error {
+	req, err := c.newRequest(ctx, http.MethodPatch,
+		"/webhooks/"+appID+"/"+token+"/messages/@original",
+		map[string]any{"content": r.Content})
+	if err != nil {
+		return err
+	}
+	return c.do(req, nil)
+}
+
 // UpsertStatusMessage edits the existing status message (if msgID is set and
 // still exists) or sends a new one, returning the live message id.
 func (c *Client) UpsertStatusMessage(ctx context.Context, channelID, msgID, content string) (string, error) {

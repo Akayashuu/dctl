@@ -93,6 +93,10 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	resp := session.NewResponder(ctx, o.Stream, o.Cmd, o.Model, oneShot)
 	defer resp.Close()
 
+	auth := &authorizer{o: o}
+	// Authors already journaled this run; skip the dedup-read for repeats.
+	seen := map[string]bool{}
+
 	for {
 		msgs, err := c.Read(ctx, ch, 100, last)
 		if err != nil {
@@ -106,8 +110,11 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			if m.Author.Bot {
 				continue // never answer a bot (incl. ourselves) → no loops
 			}
-			recordParticipant(o.Participants, m.Author.ID)
-			if !authorized(o, m.Author.ID) {
+			if !seen[m.Author.ID] {
+				seen[m.Author.ID] = true
+				recordParticipant(o.Participants, m.Author.ID)
+			}
+			if !auth.allowed(m.Author.ID) {
 				logf(o.Verbose, "skip <%s>: not on the allowlist for %q", m.Author.Username, o.Session)
 				continue // unauthorized author → observed but never drives the session
 			}
@@ -176,25 +183,50 @@ func recordParticipant(path, userID string) {
 	_, _ = state.AppendParticipant(path, userID)
 }
 
-// authorized reports whether userID may drive this session's bridge, enforcing
-// the allowlist (semantics B). When AllowState is empty the bridge runs
-// unguarded (standalone use / no enforcement). Otherwise it is an access-control
-// gate and fails CLOSED: an unreadable/corrupt state file denies rather than
-// silently dropping enforcement. The daemon state is read fresh per message so
-// /session allow changes take effect without a restart; saveLocked writes
-// atomically, so reads never tear. A missing session is not special-cased —
-// SessionAllowed checks the global allowlist first, so a globally-allowed admin
-// still passes even if the per-session entry is absent.
-func authorized(o Options, userID string) bool {
-	if o.AllowState == "" {
+// authorizer enforces the per-session allowlist (semantics B) for the bridge
+// loop, caching the parsed daemon state and reloading only when state.json
+// changes (mtime or size), so a busy channel doesn't re-read+parse the file on
+// every message. When AllowState is empty the bridge runs unguarded (standalone
+// use). Otherwise it is an access-control gate and fails CLOSED: an unreadable/
+// corrupt/missing state file denies rather than silently dropping enforcement.
+// Because saveLocked writes atomically (temp + rename), a changed allowlist
+// always lands a new mtime/size, so /session allow changes apply without a
+// restart. A missing session is not special-cased — SessionAllowed checks the
+// global allowlist first, so a globally-allowed admin still passes even if the
+// per-session entry is absent.
+type authorizer struct {
+	o       Options
+	loaded  bool
+	mod     time.Time
+	size    int64
+	st      *state.State
+	loadErr error
+}
+
+func (a *authorizer) allowed(userID string) bool {
+	if a.o.AllowState == "" {
 		return true
 	}
-	st, err := state.LoadState(o.AllowState)
+	fi, err := os.Stat(a.o.AllowState)
 	if err != nil {
-		logf(o.Verbose, "allowlist: cannot read %s (%v) — denying", o.AllowState, err)
+		logf(a.o.Verbose, "allowlist: cannot stat %s (%v) — denying", a.o.AllowState, err)
 		return false
 	}
-	return st.SessionAllowed(o.Session, userID)
+	if !a.loaded || !fi.ModTime().Equal(a.mod) || fi.Size() != a.size {
+		a.st, a.loadErr = state.LoadState(a.o.AllowState)
+		a.mod, a.size, a.loaded = fi.ModTime(), fi.Size(), true
+	}
+	if a.loadErr != nil {
+		logf(a.o.Verbose, "allowlist: cannot read %s (%v) — denying", a.o.AllowState, a.loadErr)
+		return false
+	}
+	return a.st.SessionAllowed(a.o.Session, userID)
+}
+
+// authorized is the uncached single-shot form used in tests; the Run loop holds
+// a long-lived *authorizer so reads are cached across messages.
+func authorized(o Options, userID string) bool {
+	return (&authorizer{o: o}).allowed(userID)
 }
 
 // chunk splits s into pieces no longer than max, preferring to break on a

@@ -125,6 +125,22 @@ func sessionBanner(repo, name, worktree, branch, cmd string, shared bool) string
 	return b
 }
 
+// Slow reports whether an interaction does network/exec work that can exceed
+// Discord's 3s callback deadline, so the caller should defer (ack now, edit the
+// reply in when ready): session create/close (channel + git ops, optional clone)
+// and workspace remotes (gh/glab over the network).
+func (h *Handler) Slow(in dctl.Interaction) bool {
+	switch in.Data.Name {
+	case "session":
+		sub, _ := in.Data.Subcommand()
+		return sub == "create" || sub == "close"
+	case "workspace":
+		sub, _ := in.Data.Subcommand()
+		return sub == "remotes"
+	}
+	return false
+}
+
 // Handle processes one interaction and returns the reply.
 func (h *Handler) Handle(ctx context.Context, in dctl.Interaction) dctl.Response {
 	if !h.st.Allowed(in.Member.User.ID) {

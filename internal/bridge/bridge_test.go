@@ -47,6 +47,29 @@ func TestAuthorizedEnforcesAllowlist(t *testing.T) {
 	}
 }
 
+func TestAuthorizerReloadsOnStateChange(t *testing.T) {
+	// The cache must not defeat live /session allow changes: a write that adds
+	// a user changes the file's mtime/size, so the next check reloads.
+	sp := filepath.Join(t.TempDir(), "state.json")
+	st := state.NewState(sp)
+	if err := st.AddSession(state.Session{Name: "demo", ChannelID: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddSessionAllow("demo", "u1"); err != nil {
+		t.Fatal(err)
+	}
+	a := &authorizer{o: Options{AllowState: sp, Session: "demo"}}
+	if !a.allowed("u1") || a.allowed("u2") {
+		t.Fatal("initial: u1 allowed, u2 denied")
+	}
+	if _, err := st.AddSessionAllow("demo", "u2"); err != nil {
+		t.Fatal(err)
+	}
+	if !a.allowed("u2") {
+		t.Fatal("cached authorizer must pick up the newly-allowed u2")
+	}
+}
+
 func TestAuthorizedNoEnforcementWhenStateEmpty(t *testing.T) {
 	// Standalone bridge (no --allow-state) answers everyone, preserving old behaviour.
 	if !authorized(Options{AllowState: ""}, "anyone") {

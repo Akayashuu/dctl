@@ -118,6 +118,31 @@ func it(user, cmd string, sub string, opts ...dctl.InteractionOption) dctl.Inter
 	return dctl.Interaction{Member: dctl.Member{User: dctl.Author{ID: user}}, Data: data}
 }
 
+func TestSlowClassifiesNetworkCommands(t *testing.T) {
+	h, _, _, _, _, _ := newTestHandler(t, 4)
+	slow := []dctl.Interaction{
+		it("u", "session", "create"),
+		it("u", "session", "close"),
+		it("u", "workspace", "remotes"),
+	}
+	for _, in := range slow {
+		if !h.Slow(in) {
+			t.Errorf("expected Slow=true for %s/%s", in.Data.Name, in.Data.Options[0].Name)
+		}
+	}
+	fast := []dctl.Interaction{
+		it("u", "session", "list"),
+		it("u", "workspace", "list"),
+		it("u", "set", "home"),
+		it("u", "allow", "list"),
+	}
+	for _, in := range fast {
+		if h.Slow(in) {
+			t.Errorf("expected Slow=false for %s/%s", in.Data.Name, in.Data.Options[0].Name)
+		}
+	}
+}
+
 func TestHandlerDeniesNonAllowlisted(t *testing.T) {
 	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
 	r := h.Handle(context.Background(), it("intruder", "session", "list"))
