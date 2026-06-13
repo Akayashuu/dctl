@@ -223,9 +223,10 @@ func startStreamSession(ctx context.Context, base []string, model, resumeID, dir
 	return s, nil
 }
 
-// Send writes one user message and reads back the full assistant turn. An error
-// means the stream closed (process died) — the caller should restart.
-func (s *streamSession) Send(text string) (turnResult, error) {
+// Send writes one user message and reads back the full assistant turn, emitting
+// intermediate events to onEvent (nil = none). An error means the stream closed
+// (process died) — the caller should restart.
+func (s *streamSession) Send(text string, onEvent func(Event)) (turnResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	line, err := userLine(text)
@@ -235,7 +236,7 @@ func (s *streamSession) Send(text string) (turnResult, error) {
 	if _, err := s.stdin.Write(line); err != nil {
 		return turnResult{}, err
 	}
-	tr, err := readTurn(s.out, nil)
+	tr, err := readTurn(s.out, onEvent)
 	if err != nil {
 		return tr, err
 	}
@@ -245,10 +246,11 @@ func (s *streamSession) Send(text string) (turnResult, error) {
 	return tr, nil
 }
 
-// Responder turns one Discord message into a reply string. Two implementations:
-// a persistent stream-json claude session, or a per-message one-shot command.
+// Responder turns one Discord message into a reply string, optionally emitting
+// intermediate progress events. Two implementations: a persistent stream-json
+// claude session, or a per-message one-shot command.
 type Responder interface {
-	Respond(ctx context.Context, m DctlMessage) (string, error)
+	Respond(ctx context.Context, m DctlMessage, onEvent func(Event)) (string, error)
 	Close() error
 }
 
@@ -267,7 +269,7 @@ type oneShotResponder struct {
 	run func(ctx context.Context, m DctlMessage) (string, error)
 }
 
-func (o *oneShotResponder) Respond(ctx context.Context, m DctlMessage) (string, error) {
+func (o *oneShotResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
 	return o.run(ctx, m)
 }
 func (o *oneShotResponder) Close() error { return nil }
@@ -283,7 +285,7 @@ type streamResponder struct {
 	sess  *streamSession
 }
 
-func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, error) {
+func (r *streamResponder) Respond(ctx context.Context, m DctlMessage, onEvent func(Event)) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.sess == nil {
@@ -293,7 +295,7 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, e
 		}
 		r.sess = s
 	}
-	tr, err := r.sess.Send(m.Content)
+	tr, err := r.sess.Send(m.Content, onEvent)
 	if err != nil {
 		// Process likely died: restart with the last session id and retry once.
 		resume := r.sess.sessID
@@ -303,7 +305,7 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, e
 			return "", startErr
 		}
 		r.sess = s
-		if tr, err = r.sess.Send(m.Content); err != nil {
+		if tr, err = r.sess.Send(m.Content, onEvent); err != nil {
 			return "", err
 		}
 	}

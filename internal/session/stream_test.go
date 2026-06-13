@@ -73,7 +73,6 @@ func TestStreamBaseStripsLegacyFlags(t *testing.T) {
 }
 
 func TestStreamSessionSend(t *testing.T) {
-	// Fake "process": reads one user line from stdin, replies with a canned result.
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
 	go func() {
@@ -82,13 +81,15 @@ func TestStreamSessionSend(t *testing.T) {
 			return
 		}
 		io.WriteString(stdoutW,
-			`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"+
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`+"\n"+
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"+
 				`{"type":"result","subtype":"success","is_error":false,"result":"hello back","total_cost_usd":0.002,"session_id":"abc"}`+"\n")
 		stdoutW.Close()
 	}()
 
 	s := newStreamSession(stdinW, stdoutR)
-	tr, err := s.Send("hello")
+	var got []Event
+	tr, err := s.Send("hello", func(e Event) { got = append(got, e) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +98,9 @@ func TestStreamSessionSend(t *testing.T) {
 	}
 	if s.sessID != "abc" {
 		t.Fatalf("session id not recorded: %q", s.sessID)
+	}
+	if len(got) < 1 || got[0].Kind != "tool" || got[0].Tool != "Bash" {
+		t.Fatalf("expected a Bash tool event, got %+v", got)
 	}
 }
 
