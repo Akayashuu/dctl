@@ -13,6 +13,7 @@ import (
 	handler "github.com/vskstudio/dctl/internal/handler"
 	healthpkg "github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/state"
+	"github.com/vskstudio/dctl/internal/supervisor"
 	"github.com/vskstudio/dctl/internal/worktree"
 )
 
@@ -49,7 +50,7 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 	}
 
 	self, _ := os.Executable()
-	sup := NewSupervisor(ctx, self)
+	sup := supervisor.NewSupervisor(ctx, self)
 	// Restart persisted sessions.
 	for _, sess := range st.SnapshotSessions() {
 		_ = sup.Start(sess)
