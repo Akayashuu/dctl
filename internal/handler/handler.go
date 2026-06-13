@@ -322,6 +322,7 @@ func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Re
 	if err := h.st.RemoveSession(name); err != nil {
 		return errf("persist: %v", err)
 	}
+	_ = state.RemoveParticipantJournal(state.ParticipantsPath(h.partDir, name))
 	return dctl.Response{Content: fmt.Sprintf("🗄️ Session **%s** closed.", name), Ephemeral: true}
 }
 

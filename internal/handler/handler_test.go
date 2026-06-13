@@ -815,3 +815,16 @@ func TestSessionWhoEmpty(t *testing.T) {
 		t.Fatalf("empty who should say nobody wrote yet: %q", r.Content)
 	}
 }
+
+func TestSessionClosePurgesParticipants(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
+	jp := state.ParticipantsPath(h.PartDir(), "demo")
+	state.AppendParticipant(jp, "h1")
+	h.Handle(context.Background(), it("owner", "session", "close",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	if got := state.ReadParticipants(jp); len(got) != 0 {
+		t.Fatalf("close must purge the participants journal, got %+v", got)
+	}
+}

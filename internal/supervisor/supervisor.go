@@ -15,8 +15,18 @@ import (
 type Supervisor struct {
 	ctx     context.Context
 	selfBin string // path to the dctl binary (os.Executable)
+	PartDir string // participants journal dir; empty disables --participants
 	mu      sync.Mutex
 	cancels map[string]context.CancelFunc
+}
+
+// bridgeArgs builds the child `dctl bridge` argv for sess.
+func (s *Supervisor) bridgeArgs(sess state.Session) []string {
+	args := []string{"bridge", "-c", sess.ChannelID, "--cmd", sess.Cmd}
+	if s.PartDir != "" {
+		args = append(args, "--participants", state.ParticipantsPath(s.PartDir, sess.Name))
+	}
+	return args
 }
 
 // NewSupervisor builds a Supervisor bound to ctx.
@@ -53,8 +63,7 @@ func (s *Supervisor) runLoop(ctx context.Context, sess state.Session) {
 		if ctx.Err() != nil {
 			return
 		}
-		cmd := exec.CommandContext(ctx, s.selfBin, "bridge",
-			"-c", sess.ChannelID, "--cmd", sess.Cmd)
+		cmd := exec.CommandContext(ctx, s.selfBin, s.bridgeArgs(sess)...)
 		if sess.Worktree != "" {
 			cmd.Dir = sess.Worktree
 		}

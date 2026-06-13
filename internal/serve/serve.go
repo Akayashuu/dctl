@@ -90,7 +90,9 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 
 	self, _ := os.Executable()
+	partDir := filepath.Dir(o.StatePath) // participants/<name>.log lives beside state.json
 	sup := supervisor.NewSupervisor(ctx, self)
+	sup.PartDir = partDir
 	// Restart persisted sessions.
 	for _, sess := range st.SnapshotSessions() {
 		_ = sup.Start(sess)
@@ -107,7 +109,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 
 	wt := worktree.NewWorktreer(ctx, instID)
 	fg := forge.New()
-	hdl := handler.NewHandler(c, sup, wt, fg, st, o.DefaultCmd)
+	hdl := handler.NewHandler(c, sup, wt, fg, st, o.DefaultCmd, partDir)
 
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)
