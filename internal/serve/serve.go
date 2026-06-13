@@ -11,6 +11,7 @@ import (
 	"github.com/vskstudio/dctl/internal/gateway"
 	"github.com/vskstudio/dctl/internal/handler"
 	"github.com/vskstudio/dctl/internal/health"
+	"github.com/vskstudio/dctl/internal/instanceid"
 	"github.com/vskstudio/dctl/internal/state"
 	"github.com/vskstudio/dctl/internal/supervisor"
 	"github.com/vskstudio/dctl/internal/worktree"
@@ -22,6 +23,9 @@ type Options struct {
 	DefaultCmd    string
 	HealthAddr    string
 	StatusChannel string
+	// InstanceID is the explicit per-daemon namespace (-instance flag /
+	// DCTL_INSTANCE_ID). Empty falls back to DCTL_OWNER_ID, then legacy mode.
+	InstanceID string
 	// Token is the bot token used for the gateway IDENTIFY (same value the
 	// client was built with). Sourced from the caller, not read off the client.
 	Token string
@@ -34,6 +38,41 @@ func DefaultStatePath() string {
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".config", "dctl", "state.json")
+}
+
+// resolveInstanceID computes and freezes the daemon's instanceID, per Spec §2/§8.
+//   - An invalid explicit optID is an error.
+//   - If the state already carries an id, a different non-empty resolved id is
+//     refused (changing it would orphan existing branches/worktrees); a matching
+//     or empty resolved id keeps the stored id.
+//   - On a fresh state (no id) with a non-empty resolved id and NO sessions, the
+//     id is frozen (persisted). If sessions already exist, the daemon stays in
+//     legacy (empty) mode so pre-existing sessions are never orphaned.
+func resolveInstanceID(st *state.State, optID, ownerID string) (string, error) {
+	resolved, err := instanceid.Resolve(optID, ownerID)
+	if err != nil {
+		return "", err
+	}
+	if st.InstanceID != "" {
+		if resolved != "" && resolved != st.InstanceID {
+			return "", fmt.Errorf("instanceID mismatch: state has %q but %q was requested; "+
+				"changing it would orphan existing sessions", st.InstanceID, resolved)
+		}
+		return st.InstanceID, nil
+	}
+	if resolved == "" {
+		return "", nil
+	}
+	if len(st.SnapshotSessions()) > 0 {
+		// Legacy sessions exist; stay non-namespaced so they keep working.
+		fmt.Fprintf(os.Stderr, "dctl serve: %d legacy session(s) present; staying in non-namespaced mode\n",
+			len(st.SnapshotSessions()))
+		return "", nil
+	}
+	if err := st.SetInstanceID(resolved); err != nil {
+		return "", fmt.Errorf("persist instanceID: %w", err)
+	}
+	return resolved, nil
 }
 
 // Run is the always-on Gateway daemon (gateway + supervisor + liveness).
@@ -57,11 +96,19 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 	h.SetSessions(len(st.SnapshotSessions()))
 
+	instID, err := resolveInstanceID(st, o.InstanceID, os.Getenv("DCTL_OWNER_ID"))
+	if err != nil {
+		return fmt.Errorf("resolve instance id: %w", err)
+	}
+	if instID != "" {
+		fmt.Fprintf(os.Stderr, "dctl serve: instance %q\n", instID)
+	}
+
 	repo := st.Repo
 	if repo == "" {
 		repo, _ = os.Getwd()
 	}
-	wt := worktree.NewWorktreer(ctx, repo, st.InstanceID)
+	wt := worktree.NewWorktreer(ctx, repo, instID)
 	hdl := handler.NewHandler(c, sup, wt, st, o.DefaultCmd)
 
 	if err := c.RegisterCommands(ctx); err != nil {
