@@ -23,6 +23,15 @@ var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 // (no "/", no "..", no spaces), so workspace+project cannot escape the root.
 var projectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
+// repoFor resolves the git repo root a session operates on: the workspace root
+// when no project is set (legacy single-repo), else <workspace>/<project>.
+func repoFor(workspace, project string) string {
+	if project == "" {
+		return workspace
+	}
+	return filepath.Join(workspace, project)
+}
+
 // discord is the subset of Client the Handler needs (injected so routing is testable).
 type discord interface {
 	ChannelType(ctx context.Context, id string) (int, error)
@@ -204,10 +213,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			return errf("invalid project %q — use a single name (no /, spaces, or ..)", project)
 		}
 	}
-	repo := ws
-	if project != "" {
-		repo = filepath.Join(ws, project)
-	}
+	repo := repoFor(ws, project)
 	// Worktree isolation by default; shared:true runs in the main checkout.
 	shared := in.Data.OptBool("shared")
 	var worktree, note string
@@ -265,10 +271,7 @@ func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Re
 	_ = h.sup.Stop(name)
 	if sess.Worktree != "" {
 		force := in.Data.OptBool("force")
-		repo := h.st.WorkspaceRoot()
-		if sess.Project != "" {
-			repo = filepath.Join(repo, sess.Project)
-		}
+		repo := repoFor(h.st.WorkspaceRoot(), sess.Project)
 		if err := h.wt.Remove(repo, name, force); err != nil {
 			return errf("%v — commit, or close with force:true to discard (branch session/%s is kept)", err, name)
 		}
