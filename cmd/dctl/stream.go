@@ -17,11 +17,27 @@ func newResponder(ctx context.Context, stream bool, cmdStr, model string, oneSho
 	if !stream {
 		return &oneShotResponder{run: oneShot}
 	}
-	base := strings.Fields(cmdStr)
-	if len(base) == 0 {
-		base = []string{"claude"}
+	return &streamResponder{ctx: ctx, base: streamBase(strings.Fields(cmdStr)), model: model}
+}
+
+// streamBase normalizes a base command for persistent stream-json mode by
+// dropping flags that collide with it. A session persisted before stream mode
+// carries the old default ("claude -p --continue"); streamArgv adds its own -p
+// and the stream-format flags, so the legacy -p/--print/--continue must go or
+// the process launches with a duplicate -p and a conflicting --continue.
+func streamBase(fields []string) []string {
+	out := make([]string, 0, len(fields))
+	for _, f := range fields {
+		switch f {
+		case "-p", "--print", "--continue":
+			continue
+		}
+		out = append(out, f)
 	}
-	return &streamResponder{ctx: ctx, base: base, model: model}
+	if len(out) == 0 {
+		return []string{"claude"}
+	}
+	return out
 }
 
 // userLine marshals one Claude Code stream-json user message, newline-terminated
@@ -264,7 +280,8 @@ func (s *streamSession) Close() error {
 		_ = s.stdin.Close()
 	}
 	if s.cmd != nil && s.cmd.Process != nil {
-		return s.cmd.Process.Kill()
+		_ = s.cmd.Process.Kill()
+		_ = s.cmd.Wait() // reap so a killed session doesn't leak a zombie on restart
 	}
 	return nil
 }
