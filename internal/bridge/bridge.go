@@ -31,14 +31,14 @@ const (
 
 // Options configures one bridge run (parsed from CLI flags by cmd/dctl).
 type Options struct {
-	Channel  string
-	Cmd      string
-	Stream   bool
-	Model    string
-	Ensure   string
-	Interval int
-	State    string
-	After    string
+	Channel      string
+	Cmd          string
+	Stream       bool
+	Model        string
+	Ensure       string
+	Interval     int
+	State        string
+	After        string
 	Participants string // append-only journal of message authors (empty = disabled)
 	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
 	Session      string // session name, used with AllowState to resolve the per-session allowlist
@@ -178,26 +178,21 @@ func recordParticipant(path, userID string) {
 
 // authorized reports whether userID may drive this session's bridge, enforcing
 // the allowlist (semantics B). When AllowState is empty the bridge runs
-// unguarded (standalone use / no enforcement). The daemon state is read fresh
-// per message so /session allow changes take effect without a restart;
-// saveLocked writes atomically, so reads never tear. An unreadable state file
-// fails open: a transient read error must not lock every author out of a live
-// session.
+// unguarded (standalone use / no enforcement). Otherwise it is an access-control
+// gate and fails CLOSED: an unreadable/corrupt state file denies rather than
+// silently dropping enforcement. The daemon state is read fresh per message so
+// /session allow changes take effect without a restart; saveLocked writes
+// atomically, so reads never tear. A missing session is not special-cased —
+// SessionAllowed checks the global allowlist first, so a globally-allowed admin
+// still passes even if the per-session entry is absent.
 func authorized(o Options, userID string) bool {
 	if o.AllowState == "" {
 		return true
 	}
 	st, err := state.LoadState(o.AllowState)
 	if err != nil {
-		logf(o.Verbose, "allowlist: cannot read %s (%v) — failing open", o.AllowState, err)
-		return true
-	}
-	if _, ok := st.FindSession(o.Session); !ok {
-		// State doesn't know this session (missing/empty file, or not yet
-		// persisted): we can't enforce an allowlist we can't see, so fail open
-		// rather than lock every author out of a live session.
-		logf(o.Verbose, "allowlist: session %q absent from %s — failing open", o.Session, o.AllowState)
-		return true
+		logf(o.Verbose, "allowlist: cannot read %s (%v) — denying", o.AllowState, err)
+		return false
 	}
 	return st.SessionAllowed(o.Session, userID)
 }

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -53,9 +54,18 @@ func TestAuthorizedNoEnforcementWhenStateEmpty(t *testing.T) {
 	}
 }
 
-func TestAuthorizedFailsOpenOnUnreadableState(t *testing.T) {
-	// A missing/unreadable state file must not brick the session: fail open.
-	if !authorized(Options{AllowState: "/nonexistent/state.json", Session: "demo"}, "u1") {
-		t.Fatal("unreadable state must fail open (authorize) rather than lock everyone out")
+func TestAuthorizedFailsClosedOnUnreadableState(t *testing.T) {
+	// An access-control gate fails CLOSED: a corrupt/unreadable state file
+	// denies rather than silently dropping enforcement.
+	corrupt := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(corrupt, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if authorized(Options{AllowState: corrupt, Session: "demo"}, "u1") {
+		t.Fatal("corrupt state must fail closed (deny), not authorize")
+	}
+	// A missing file resolves to empty state with no allows → still deny.
+	if authorized(Options{AllowState: "/nonexistent/state.json", Session: "demo"}, "u1") {
+		t.Fatal("missing state with no allows must deny")
 	}
 }

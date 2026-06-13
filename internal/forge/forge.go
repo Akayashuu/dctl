@@ -132,11 +132,15 @@ func (c *Client) Clone(ctx context.Context, spec, workspace string) (string, err
 	var args []string
 	switch {
 	case isURL:
-		name, args = "git", []string{"clone", spec, dir}
+		// `--` stops git from treating a (validated) spec as an option.
+		name, args = "git", []string{"clone", "--", spec, dir}
 	case gh:
+		// gh parses `spec` as a positional before `--`; parseSpec already
+		// rejects a leading dash, so it can't be read as a flag.
 		name, args = "gh", []string{"repo", "clone", spec, "--", dir}
 	case gl:
-		name, args = "glab", []string{"repo", "clone", spec, dir}
+		// `--` stops glab (cobra) from treating spec as a flag.
+		name, args = "glab", []string{"repo", "clone", "--", spec, dir}
 	default:
 		return "", fmt.Errorf("no gh/glab installed to clone %q; pass a full git URL instead", spec)
 	}
@@ -152,10 +156,20 @@ func (c *Client) Clone(ctx context.Context, spec, workspace string) (string, err
 }
 
 // parseSpec validates spec and returns the project basename + whether it's a URL.
+// It rejects shell/argument-injection vectors: control characters, path
+// traversal, and any segment or derived name beginning with '-' (which a CLI
+// could otherwise read as an option flag — the git-clone --upload-pack RCE
+// class). Callers still pass specs after a `--` separator as defense in depth.
 func parseSpec(spec string) (base string, isURL bool, err error) {
+	if spec == "" {
+		return "", false, fmt.Errorf("empty repo spec")
+	}
+	if strings.ContainsFunc(spec, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return "", false, fmt.Errorf("invalid repo spec: control character")
+	}
 	if strings.HasPrefix(spec, "https://") || strings.HasPrefix(spec, "git@") || strings.HasPrefix(spec, "ssh://") {
 		b := path.Base(strings.TrimSuffix(spec, ".git"))
-		if b == "" || b == "." || b == "/" || strings.Contains(b, "..") {
+		if b == "" || b == "." || b == "/" || strings.Contains(b, "..") || strings.HasPrefix(b, "-") {
 			return "", false, fmt.Errorf("cannot derive project name from %q", spec)
 		}
 		return b, true, nil
@@ -164,7 +178,7 @@ func parseSpec(spec string) (base string, isURL bool, err error) {
 		return "", false, fmt.Errorf("invalid repo spec %q — use owner/name or a full git URL", spec)
 	}
 	for _, seg := range strings.Split(spec, "/") {
-		if seg == "" || seg == "." || seg == ".." {
+		if seg == "" || seg == "." || seg == ".." || strings.HasPrefix(seg, "-") {
 			return "", false, fmt.Errorf("invalid repo spec %q", spec)
 		}
 	}

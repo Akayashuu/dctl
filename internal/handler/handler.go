@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/forge"
@@ -22,6 +23,14 @@ var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 // projectRe constrains a workspace project name to a single safe path segment
 // (no "/", no "..", no spaces), so workspace+project cannot escape the root.
 var projectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
+// Forge/git operations run inline on the gateway dispatch loop, so bound them:
+// an unreachable host or a hung CLI must not wedge the daemon. Clone gets a
+// generous ceiling (large repos), listing a tight one.
+const (
+	cloneTimeout = 10 * time.Minute
+	listTimeout  = 30 * time.Second
+)
 
 // repoFor resolves the git repo root a session operates on: the workspace root
 // when no project is set (legacy single-repo), else <workspace>/<project>.
@@ -239,7 +248,9 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	project := ""
 	if ws != "" {
 		if spec, ok := in.Data.Opt("clone"); ok && spec != "" {
-			dir, err := h.fg.Clone(ctx, spec, ws)
+			cctx, cancel := context.WithTimeout(ctx, cloneTimeout)
+			dir, err := h.fg.Clone(cctx, spec, ws)
+			cancel()
 			if err != nil {
 				return errf("clone: %v", err)
 			}
@@ -273,14 +284,18 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	case "category":
 		ch, err := h.d.CreateChannelUnder(ctx, home.ID, title)
 		if err != nil {
-			_ = h.wt.Remove(repo, name, true) // roll back the worktree we just made
+			if rmErr := h.wt.Remove(repo, name, true); rmErr != nil { // roll back the worktree we just made
+				fmt.Fprintf(os.Stderr, "dctl: worktree rollback for %q failed: %v\n", name, rmErr)
+			}
 			return errf("create channel: %v", err)
 		}
 		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree, Project: project}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, title, "Session **"+title+"** started.")
 		if err != nil {
-			_ = h.wt.Remove(repo, name, true)
+			if rmErr := h.wt.Remove(repo, name, true); rmErr != nil {
+				fmt.Fprintf(os.Stderr, "dctl: worktree rollback for %q failed: %v\n", name, rmErr)
+			}
 			return errf("create forum post: %v", err)
 		}
 		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree, Project: project}
@@ -479,7 +494,9 @@ func (h *Handler) workspaceRemotes(ctx context.Context) dctl.Response {
 	if !gh && !gl {
 		return errf("no gh/glab found — install one and authenticate")
 	}
-	repos, err := h.fg.List(ctx)
+	lctx, cancel := context.WithTimeout(ctx, listTimeout)
+	defer cancel()
+	repos, err := h.fg.List(lctx)
 	if err != nil {
 		return errf("list remotes: %v", err)
 	}

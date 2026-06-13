@@ -67,7 +67,12 @@ func (w *Worktreer) Create(repo, name string) (string, error) {
 func (w *Worktreer) Remove(repo, name string, force bool) error {
 	p := w.Path(repo, name)
 	if !force {
-		out, _ := exec.CommandContext(w.ctx, "git", "-C", p, "status", "--porcelain").Output()
+		out, err := exec.CommandContext(w.ctx, "git", "-C", p, "status", "--porcelain").Output()
+		if err != nil {
+			// Can't verify the tree is clean (missing dir, not a git repo, git
+			// error): refuse rather than risk discarding work. force: bypasses.
+			return fmt.Errorf("worktree %q: cannot verify clean state (%v) — close with force:true to remove anyway", name, err)
+		}
 		if strings.TrimSpace(string(out)) != "" {
 			return fmt.Errorf("worktree %q has uncommitted changes", name)
 		}

@@ -73,6 +73,35 @@ func TestCloneRejectsBadSpec(t *testing.T) {
 	if _, err := c.Clone(context.Background(), "a b; rm -rf", "/ws"); err == nil {
 		t.Fatal("expected rejection of spec with shell metacharacters")
 	}
+	// Argument injection: a leading-dash segment could be read as a CLI flag
+	// (the git-clone --upload-pack RCE class).
+	for _, bad := range []string{"-x/app", "owner/-rf", "--upload-pack=x/app", "ow\tner/app", ""} {
+		if _, err := c.Clone(context.Background(), bad, "/ws"); err == nil {
+			t.Fatalf("expected rejection of injection spec %q", bad)
+		}
+	}
+}
+
+func TestCloneArgvSeparatesSpec(t *testing.T) {
+	// git/glab clones must place spec after a `--` separator (defense in depth).
+	r := &fakeRunner{}
+	c := &Client{r: r}
+	if _, err := c.Clone(context.Background(), "https://github.com/me/app.git", "/ws"); err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	argv := r.calls[0]
+	sep, spec := -1, -1
+	for i, a := range argv {
+		if a == "--" {
+			sep = i
+		}
+		if a == "https://github.com/me/app.git" {
+			spec = i
+		}
+	}
+	if sep == -1 || spec == -1 || sep > spec {
+		t.Fatalf("expected `--` before spec in argv, got %+v", argv)
+	}
 }
 
 func TestCloneOwnerNameUsesGh(t *testing.T) {

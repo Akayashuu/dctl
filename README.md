@@ -120,7 +120,9 @@ per-session allowlist (`/session allow`) *widens* who may drive a session's brid
 by writing in its channel: an author is accepted when **globally allowed OR on the
 session's allowlist**. The bridge enforces this per message (reading the daemon
 state fresh, so changes apply without a restart); unauthorized authors are recorded
-for `/session who` but never trigger a Claude run.
+for `/session who` but never trigger a Claude run. Enforcement **fails closed**: if
+the state file is unreadable or corrupt the bridge denies rather than silently
+answering everyone (globally-allowed admins still pass via the global list).
 
 ## Library
 
