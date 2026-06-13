@@ -148,6 +148,7 @@ func (p *progressView) summary(failed bool) string {
 	if p.actions == 0 {
 		s = icon + " terminé"
 	} else {
+		// actions >= 1 here, so plural only ever pluralizes a positive count.
 		s = fmt.Sprintf("%s %d action%s", icon, p.actions, plural(p.actions))
 		if len(parts) > 0 {
 			s += " (" + strings.Join(parts, ", ") + ")"
