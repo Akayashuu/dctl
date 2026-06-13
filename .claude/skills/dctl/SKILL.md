@@ -20,13 +20,20 @@ a flag or a versioned file.
 | Command | Use |
 |---|---|
 | `dctl send [-c CH] "<text>"` | Post a message; prints its id. |
-| `dctl reply [-c CH] <msg_id> "<text>"` | Threaded reply; prints reply id. |
+| `dctl reply [-c CH] <msg_id> "<text>"` | Inline reply (message_reference); prints reply id. |
+| `dctl thread [-c CH] <msg_id> "<name>"` | Open a **real thread** off a message; prints the thread's channel id. Post into it with `send -c <thread_id>`. |
 | `dctl read [-c CH] [-n 20] [--after ID]` | Recent messages, oldest→newest, one per line. |
 | `dctl watch [-c CH] [-i 10] [--after ID]` | Stream new messages forever (foreground). |
-| `dctl channel list [--guild ID]` | List channels (`id type name`). |
-| `dctl channel create <name>` | Create a text channel. |
-| `dctl channel ensure <name>` | Find-or-create by name (no duplicate). |
-| `dctl channel delete <id>` | **Delete** a channel (irreversible). |
+| `dctl channel list [--guild ID]` | List channels (`id type name`; type 0=text, 15=forum). |
+| `dctl channel create [--forum] <name>` | Create a text (or `--forum`) channel.¹ |
+| `dctl channel post <forum_id> <title> <content>` | Open a post (thread) in a forum.¹ |
+| `dctl channel ensure <name>` | Find-or-create text channel by name (no duplicate).¹ |
+| `dctl channel delete <id>` | **Delete** a channel (irreversible).¹ |
+
+¹ Needs the bot's **Manage Channels** permission. The minimal invite perms
+(`68608`) lack it → these return `discord 403 Missing Permissions`. Re-invite
+with Manage Channels (perms `68624`) to use channel create/delete/forum.
+`send`/`read`/`reply`/`thread` work on the minimal perms.
 
 `-c`/`--channel` overrides the default channel. `--guild` defaults to the bot's
 sole server.
@@ -35,6 +42,8 @@ sole server.
 
 - **Read before you reply.** `dctl read` to get the `message_id` and context, then
   `dctl reply <id>`. Replying blind loses the thread.
+- **Real thread vs inline reply.** `reply` = a one-off inline reply. `thread` = a
+  proper sidebar thread for an ongoing sub-conversation; then `send -c <thread_id>`.
 - **Default channel implicit.** Omit `-c` unless the user names another channel.
 - **No default channel set?** `dctl channel ensure prospector` creates one without
   duplicating an existing same-name channel.
