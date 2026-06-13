@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/forge"
 	"github.com/vskstudio/dctl/internal/state"
 )
 
@@ -30,10 +31,18 @@ type supervisor interface {
 }
 
 // worktrees owns per-session git worktree lifecycle. Create returns the worktree
-// path ("" + nil error means "fall back to shared", e.g. not a git repo).
+// path ("" + nil error means "fall back to shared", e.g. not a git repo). The
+// repo root is passed per call so one Worktreer serves every project.
 type worktrees interface {
-	Create(name string) (path string, err error)
-	Remove(name string, force bool) error
+	Create(repo, name string) (path string, err error)
+	Remove(repo, name string, force bool) error
+}
+
+// forges lists/clones remote repos via gh/glab (see internal/forge).
+type forges interface {
+	Available() (github, gitlab bool)
+	List(ctx context.Context) ([]forge.Repo, error)
+	Clone(ctx context.Context, spec, workspace string) (projectDir string, err error)
 }
 
 // Handler routes slash-command interactions to actions.
@@ -41,14 +50,15 @@ type Handler struct {
 	d          discord
 	sup        supervisor
 	wt         worktrees
+	fg         forges
 	st         *state.State
 	defaultCmd string
 }
 
 // NewHandler builds a Handler. defaultCmd is the bridge command used when a
 // session is created without an explicit cmd (e.g. "claude -p --continue").
-func NewHandler(d discord, sup supervisor, wt worktrees, st *state.State, defaultCmd string) *Handler {
-	return &Handler{d: d, sup: sup, wt: wt, st: st, defaultCmd: defaultCmd}
+func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, st *state.State, defaultCmd string) *Handler {
+	return &Handler{d: d, sup: sup, wt: wt, fg: fg, st: st, defaultCmd: defaultCmd}
 }
 
 func deny() dctl.Response { return dctl.Response{Content: "⛔ Not authorized.", Ephemeral: true} }
@@ -136,9 +146,10 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	}
 	// Worktree isolation by default; shared:true runs in the main checkout.
 	shared := in.Data.OptBool("shared")
+	repo := h.st.WorkspaceRoot() // legacy root for now; project resolution added in a later task
 	var worktree, note string
 	if !shared {
-		path, err := h.wt.Create(name)
+		path, err := h.wt.Create(repo, name)
 		if err != nil {
 			return errf("worktree: %v", err)
 		}
@@ -156,14 +167,14 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	case "category":
 		ch, err := h.d.CreateChannelUnder(ctx, home.ID, title)
 		if err != nil {
-			_ = h.wt.Remove(name, true) // roll back the worktree we just made
+			_ = h.wt.Remove(repo, name, true) // roll back the worktree we just made
 			return errf("create channel: %v", err)
 		}
 		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, title, "Session **"+title+"** started.")
 		if err != nil {
-			_ = h.wt.Remove(name, true)
+			_ = h.wt.Remove(repo, name, true)
 			return errf("create forum post: %v", err)
 		}
 		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree}
@@ -191,7 +202,8 @@ func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Re
 	_ = h.sup.Stop(name)
 	if sess.Worktree != "" {
 		force := in.Data.OptBool("force")
-		if err := h.wt.Remove(name, force); err != nil {
+		repo := h.st.WorkspaceRoot()
+		if err := h.wt.Remove(repo, name, force); err != nil {
 			return errf("%v — commit, or close with force:true to discard (branch session/%s is kept)", err, name)
 		}
 	}

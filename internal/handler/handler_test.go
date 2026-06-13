@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/forge"
 	"github.com/vskstudio/dctl/internal/state"
 )
 
@@ -37,16 +38,19 @@ func (f *fakeSup) Start(s state.Session) error { f.started = append(f.started, s
 func (f *fakeSup) Stop(name string) error      { f.stopped = append(f.stopped, name); return nil }
 
 type fakeWT struct {
-	created, removed []string
-	path             string // "" → simulate shared fallback
-	removeErr        error  // simulate dirty worktree
+	createdRepos []string // repo arg captured per Create
+	created      []string
+	removed      []string
+	path         string // "" → simulate shared fallback
+	removeErr    error  // simulate dirty worktree
 }
 
-func (f *fakeWT) Create(name string) (string, error) {
+func (f *fakeWT) Create(repo, name string) (string, error) {
+	f.createdRepos = append(f.createdRepos, repo)
 	f.created = append(f.created, name)
 	return f.path, nil
 }
-func (f *fakeWT) Remove(name string, force bool) error {
+func (f *fakeWT) Remove(repo, name string, force bool) error {
 	if f.removeErr != nil && !force {
 		return f.removeErr
 	}
@@ -54,14 +58,35 @@ func (f *fakeWT) Remove(name string, force bool) error {
 	return nil
 }
 
-func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *fakeWT, *state.State) {
+type fakeForge struct {
+	repos    []forge.Repo
+	cloneDir string
+	cloneErr error
+	cloned   []string // specs passed to Clone
+	gh, gl   bool
+}
+
+func (f *fakeForge) Available() (bool, bool) { return f.gh, f.gl }
+func (f *fakeForge) List(ctx context.Context) ([]forge.Repo, error) {
+	return f.repos, nil
+}
+func (f *fakeForge) Clone(ctx context.Context, spec, workspace string) (string, error) {
+	f.cloned = append(f.cloned, spec)
+	if f.cloneErr != nil {
+		return "", f.cloneErr
+	}
+	return f.cloneDir, nil
+}
+
+func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *fakeWT, *fakeForge, *state.State) {
 	t.Helper()
 	d := &fakeDiscord{homeType: homeType}
 	sup := &fakeSup{}
 	wt := &fakeWT{path: "/wt/x"}
+	fg := &fakeForge{gh: true}
 	st := state.NewState(t.TempDir() + "/s.json")
 	st.AddAllow("owner")
-	return NewHandler(d, sup, wt, st, "claude"), d, sup, wt, st
+	return NewHandler(d, sup, wt, fg, st, "claude"), d, sup, wt, fg, st
 }
 
 func it(user, cmd string, sub string, opts ...dctl.InteractionOption) dctl.Interaction {
@@ -75,7 +100,7 @@ func it(user, cmd string, sub string, opts ...dctl.InteractionOption) dctl.Inter
 }
 
 func TestHandlerDeniesNonAllowlisted(t *testing.T) {
-	h, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
+	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
 	r := h.Handle(context.Background(), it("intruder", "session", "list"))
 	if !r.Ephemeral || r.Content == "" {
 		t.Fatalf("expected ephemeral denial, got %+v", r)
@@ -86,7 +111,7 @@ func TestHandlerDeniesNonAllowlisted(t *testing.T) {
 }
 
 func TestSetHomeDetectsCategory(t *testing.T) {
-	h, _, _, _, st := newTestHandler(t, 4) // 4 = GUILD_CATEGORY
+	h, _, _, _, _, st := newTestHandler(t, 4) // 4 = GUILD_CATEGORY
 	h.Handle(context.Background(), it("owner", "set", "home",
 		dctl.InteractionOption{Name: "channel", Value: "cat1"}))
 	if st.Home.ID != "cat1" || st.Home.Type != "category" {
@@ -95,7 +120,7 @@ func TestSetHomeDetectsCategory(t *testing.T) {
 }
 
 func TestSetHomeDetectsForum(t *testing.T) {
-	h, _, _, _, st := newTestHandler(t, dctl.ChannelForum)
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelForum)
 	h.Handle(context.Background(), it("owner", "set", "home",
 		dctl.InteractionOption{Name: "channel", Value: "f1"}))
 	if st.Home.Type != "forum" {
@@ -104,7 +129,7 @@ func TestSetHomeDetectsForum(t *testing.T) {
 }
 
 func TestSessionCreateText(t *testing.T) {
-	h, d, sup, wt, st := newTestHandler(t, dctl.ChannelText)
+	h, d, sup, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	h.Handle(context.Background(), it("owner", "session", "create",
 		dctl.InteractionOption{Name: "name", Value: "demo"}))
@@ -124,7 +149,7 @@ func TestSessionCreateText(t *testing.T) {
 }
 
 func TestSessionCreateShared(t *testing.T) {
-	h, _, _, wt, st := newTestHandler(t, dctl.ChannelText)
+	h, _, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	h.Handle(context.Background(), it("owner", "session", "create",
 		dctl.InteractionOption{Name: "name", Value: "demo"},
@@ -140,7 +165,7 @@ func TestSessionCreateShared(t *testing.T) {
 
 func TestSessionCreateRejectsUnsafeName(t *testing.T) {
 	for _, name := range []string{"../escape", "a/b", "..", "with space", "bad;rm", ""} {
-		h, d, _, wt, st := newTestHandler(t, dctl.ChannelText)
+		h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
 		st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 		r := h.Handle(context.Background(), it("owner", "session", "create",
 			dctl.InteractionOption{Name: "name", Value: name}))
@@ -157,7 +182,7 @@ func TestSessionCreateRejectsUnsafeName(t *testing.T) {
 }
 
 func TestSessionCreateAcceptsSafeName(t *testing.T) {
-	h, d, _, _, st := newTestHandler(t, dctl.ChannelText)
+	h, d, _, _, _, st := newTestHandler(t, dctl.ChannelText)
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	r := h.Handle(context.Background(), it("owner", "session", "create",
 		dctl.InteractionOption{Name: "name", Value: "feat_login-2"}))
@@ -167,7 +192,7 @@ func TestSessionCreateAcceptsSafeName(t *testing.T) {
 }
 
 func TestSessionCreateRequiresHome(t *testing.T) {
-	h, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
+	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
 	r := h.Handle(context.Background(), it("owner", "session", "create",
 		dctl.InteractionOption{Name: "name", Value: "demo"}))
 	if !r.Ephemeral {
@@ -176,7 +201,7 @@ func TestSessionCreateRequiresHome(t *testing.T) {
 }
 
 func TestSessionCreateForum(t *testing.T) {
-	h, d, sup, _, st := newTestHandler(t, dctl.ChannelForum)
+	h, d, sup, _, _, st := newTestHandler(t, dctl.ChannelForum)
 	st.SetHome(state.HomeRef{ID: "forum1", Type: "forum"})
 	h.Handle(context.Background(), it("owner", "session", "create",
 		dctl.InteractionOption{Name: "name", Value: "topic"}))
@@ -189,7 +214,7 @@ func TestSessionCreateForum(t *testing.T) {
 }
 
 func TestSessionCloseStopsAndArchives(t *testing.T) {
-	h, d, sup, wt, st := newTestHandler(t, dctl.ChannelText)
+	h, d, sup, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
 	h.Handle(context.Background(), it("owner", "session", "close",
@@ -203,7 +228,7 @@ func TestSessionCloseStopsAndArchives(t *testing.T) {
 }
 
 func TestSessionCloseDirtyRefusedWithoutForce(t *testing.T) {
-	h, d, _, wt, st := newTestHandler(t, dctl.ChannelText)
+	h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	wt.removeErr = errors.New(`worktree "demo" has uncommitted changes`)
 	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
 	r := h.Handle(context.Background(), it("owner", "session", "close",
@@ -220,7 +245,7 @@ func TestSessionCloseDirtyRefusedWithoutForce(t *testing.T) {
 }
 
 func TestSessionCloseDirtyForced(t *testing.T) {
-	h, _, _, wt, st := newTestHandler(t, dctl.ChannelText)
+	h, _, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	wt.removeErr = errors.New("dirty")
 	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
 	h.Handle(context.Background(), it("owner", "session", "close",
@@ -270,7 +295,7 @@ func TestSessionCreateUsesQualifiedTitle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h, d, _, _, st := newTestHandler(t, tt.homeType)
+			h, d, _, _, _, st := newTestHandler(t, tt.homeType)
 			st.InstanceID = tt.instanceID
 			st.SetHome(tt.setHome)
 			h.Handle(context.Background(), it("owner", "session", "create",
@@ -289,7 +314,7 @@ func TestSessionCreateUsesQualifiedTitle(t *testing.T) {
 func TestSessionCloseOnlyTouchesOwnSession(t *testing.T) {
 	// Two instances each own a logically-identical "foo" with distinct channel
 	// ids. Closing on instance "bob" must archive only bob's channel.
-	h, d, sup, wt, st := newTestHandler(t, dctl.ChannelText)
+	h, d, sup, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	st.InstanceID = "bob"
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	// bob's own session, keyed by logical name, pointing at bob's channel.
@@ -315,7 +340,7 @@ func TestSessionCloseOnlyTouchesOwnSession(t *testing.T) {
 func TestSessionCloseUnknownNameIsNoop(t *testing.T) {
 	// Closing a name absent from this instance's state touches nothing — it
 	// cannot reach another instance's resources.
-	h, d, sup, _, st := newTestHandler(t, dctl.ChannelText)
+	h, d, sup, _, _, st := newTestHandler(t, dctl.ChannelText)
 	st.InstanceID = "bob"
 	r := h.Handle(context.Background(), it("owner", "session", "close",
 		dctl.InteractionOption{Name: "name", Value: "alice-only"}))
