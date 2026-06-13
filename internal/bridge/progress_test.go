@@ -62,6 +62,64 @@ func TestProgressSummaryError(t *testing.T) {
 	}
 }
 
+func TestProgressSummaryNoActions(t *testing.T) {
+	// A full-mode turn that only reasoned (text, no tools) must not read "0 actions".
+	pv := newProgressView(nil, "full", false, time.Now())
+	pv.add(session.Event{Kind: "text", Detail: "just thinking"})
+	pv.add(session.Event{Kind: "result", Cost: 0})
+	s := pv.summary(false)
+	if !strings.HasPrefix(s, "✅ terminé") {
+		t.Fatalf("summary = %q, want ✅ terminé…", s)
+	}
+	if strings.Contains(s, "action") {
+		t.Fatalf("zero-tool summary should not mention actions: %q", s)
+	}
+}
+
+func TestProgressResetDiscardsPartialTurn(t *testing.T) {
+	// A mid-turn crash emits partial events, then a reset, then the retried turn.
+	// Only the retried turn must be counted.
+	pv := newProgressView(nil, "full", false, time.Now())
+	pv.add(session.Event{Kind: "tool", Tool: "Bash", Detail: "a"})
+	pv.add(session.Event{Kind: "tool", Tool: "Read", Detail: "b"})
+	pv.add(session.Event{Kind: "reset"})
+	pv.add(session.Event{Kind: "tool", Tool: "Read", Detail: "c"})
+	pv.add(session.Event{Kind: "result", Cost: 0.02})
+	s := pv.summary(false)
+	if !strings.HasPrefix(s, "✅ 1 action (Read)") {
+		t.Fatalf("reset must discard the partial turn, got %q", s)
+	}
+}
+
+func TestProgressFinishCollapsesOrphanAfterReset(t *testing.T) {
+	// A turn streams activity (posts a live message), then a reset clears it and
+	// the retry produces nothing in actions mode: finish must still collapse the
+	// orphaned live message to a summary rather than leave it on "en cours".
+	var posts []string
+	post := func(id, content string) (string, error) {
+		posts = append(posts, content)
+		return "msg-1", nil
+	}
+	pv := newProgressView(post, "actions", false, time.Now())
+	pv.add(session.Event{Kind: "tool", Tool: "Bash", Detail: "a"})
+	pv.add(session.Event{Kind: "reset"})
+	pv.finish(false)
+	if len(posts) == 0 || !strings.HasPrefix(posts[len(posts)-1], "✅") {
+		t.Fatalf("expected orphan collapsed to summary, posts = %v", posts)
+	}
+}
+
+func TestPlural(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{{0, "s"}, {1, ""}, {2, "s"}} {
+		if got := plural(tc.n); got != tc.want {
+			t.Fatalf("plural(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+}
+
 func TestProgressPostsThrottledThenFlushes(t *testing.T) {
 	var posts []string
 	post := func(id, content string) (string, error) {

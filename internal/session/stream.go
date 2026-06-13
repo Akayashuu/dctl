@@ -69,7 +69,7 @@ type turnResult struct {
 
 // Event is one intermediate stream occurrence surfaced to a progress consumer.
 type Event struct {
-	Kind    string  // "tool" | "text" | "result"
+	Kind    string  // "tool" | "text" | "result" | "reset"
 	Tool    string  // tool name (Kind == "tool")
 	Detail  string  // tool: salient input field; text: the assistant text
 	Cost    float64 // Kind == "result": total_cost_usd
@@ -298,6 +298,11 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage, onEvent fu
 	tr, err := r.sess.Send(m.Content, onEvent)
 	if err != nil {
 		// Process likely died: restart with the last session id and retry once.
+		// Tell the consumer to discard any partial-turn events emitted before the
+		// crash so the retried turn isn't double-counted.
+		if onEvent != nil {
+			onEvent(Event{Kind: "reset"})
+		}
 		resume := r.sess.sessID
 		_ = r.sess.Close()
 		s, startErr := startStreamSession(r.ctx, r.base, r.model, resume, r.dir)

@@ -43,6 +43,15 @@ func (p *progressView) add(ev session.Event) {
 	case "result":
 		p.cost = ev.Cost
 		return
+	case "reset":
+		// The stream died mid-turn and is being retried: discard the partial
+		// turn's activity so the summary counts only the turn that succeeds.
+		// msgID/lastEdit are kept so the same live message keeps being edited.
+		p.lines = nil
+		p.order = nil
+		p.cost = 0
+		p.counts = map[string]int{}
+		return
 	case "text":
 		if p.level != "full" {
 			return
@@ -87,7 +96,13 @@ func (p *progressView) flush(force bool) {
 // (keep) a final flush of the full running list.
 func (p *progressView) finish(failed bool) {
 	if len(p.lines) == 0 {
-		return // nothing happened (e.g. instant reply) — no progress message
+		// Nothing to show. If a live message was already posted (e.g. a turn
+		// that streamed activity then got reset on a mid-turn restart), collapse
+		// it to a summary so it isn't left stuck on "⏳ en cours…".
+		if p.msgID != "" && p.post != nil {
+			p.post(p.msgID, p.summary(failed))
+		}
+		return
 	}
 	if p.keep {
 		p.dirty = true
@@ -128,9 +143,16 @@ func (p *progressView) summary(failed bool) string {
 			parts = append(parts, name)
 		}
 	}
-	s := fmt.Sprintf("%s %d action%s", icon, total, plural(total))
-	if len(parts) > 0 {
-		s += " (" + strings.Join(parts, ", ") + ")"
+	// A turn can finish with no tool actions (e.g. pure reasoning/text in full
+	// mode): report it as done rather than the misleading "0 actions".
+	var s string
+	if total == 0 {
+		s = icon + " terminé"
+	} else {
+		s = fmt.Sprintf("%s %d action%s", icon, total, plural(total))
+		if len(parts) > 0 {
+			s += " (" + strings.Join(parts, ", ") + ")"
+		}
 	}
 	s += fmt.Sprintf(" · %ds", int(time.Since(p.start).Round(time.Second)/time.Second))
 	if p.cost > 0 {
@@ -140,10 +162,10 @@ func (p *progressView) summary(failed bool) string {
 }
 
 func plural(n int) string {
-	if n > 1 {
-		return "s"
+	if n == 1 {
+		return ""
 	}
-	return ""
+	return "s"
 }
 
 func formatCost(c float64) string {
