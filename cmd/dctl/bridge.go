@@ -27,19 +27,25 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	ensure := fs.String("ensure", "prospector", "if no channel is set, create/reuse a channel with this name")
 	interval := fs.Int("i", 5, "poll interval in seconds")
 	state := fs.String("state", "", "file to persist the last-seen message id across restarts")
+	participants := fs.String("participants", "", "append-only journal of message authors for /session who")
 	after := fs.String("after", "", "seed start id for the first run (state file wins once it exists)")
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	fs.Parse(args)
 
 	return bridge.Run(ctx, c, bridge.Options{
-		Channel:  *ch,
-		Cmd:      *cmdStr,
-		Stream:   *stream,
-		Model:    *model,
-		Ensure:   *ensure,
-		Interval: *interval,
-		State:    *state,
-		After:    *after,
-		Verbose:  *verbose,
+		Channel:      *ch,
+		Cmd:          *cmdStr,
+		Stream:       *stream,
+		Model:        *model,
+		Ensure:       *ensure,
+		Interval:     *interval,
+		State:        *state,
+		Participants: *participants,
+		After:        *after,
+		Verbose:      *verbose,
 	})
 }
+
+// bridgeOptionsHasParticipants exists so a compile-time test can assert the
+// --participants journal is wired into bridge.Options.
+var bridgeOptionsHasParticipants = bridge.Options{}.Participants
