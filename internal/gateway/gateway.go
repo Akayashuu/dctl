@@ -1,4 +1,4 @@
-package dctl
+package gateway
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/health"
 )
 
@@ -26,21 +27,21 @@ type gwPayload struct {
 // surfaces INTERACTION_CREATE events on Interactions. It records heartbeat ACKs
 // into Health (when non-nil) so liveness reflects pure transport state.
 type Gateway struct {
-	c            *Client
-	Interactions chan Interaction
+	c            *dctl.Client
+	Interactions chan dctl.Interaction
 	Health       *health.Health
 }
 
 // NewGateway builds a Gateway for client c. h may be nil.
-func NewGateway(c *Client, h *health.Health) *Gateway {
-	return &Gateway{c: c, Interactions: make(chan Interaction, 16), Health: h}
+func NewGateway(c *dctl.Client, h *health.Health) *Gateway {
+	return &Gateway{c: c, Interactions: make(chan dctl.Interaction, 16), Health: h}
 }
 
 // Run connects and processes events until ctx is cancelled or the connection
 // drops. On connection loss it returns an error; the caller reconnects.
 func (g *Gateway) Run(ctx context.Context) error {
 	if !g.c.Enabled() {
-		return ErrDisabled
+		return dctl.ErrDisabled
 	}
 	conn, _, err := websocket.Dial(ctx, gatewayURL, nil)
 	if err != nil {
@@ -65,7 +66,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 	identify := map[string]any{
 		"op": 2,
 		"d": map[string]any{
-			"token":      g.c.token,
+			"token":      g.c.Token(),
 			"intents":    intentGuilds,
 			"properties": map[string]any{"os": "linux", "browser": "dctl", "device": "dctl"},
 		},
@@ -100,7 +101,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			g.Health.HeartbeatAck(time.Now())
 		}
 		if p.Op == 0 && p.T == "INTERACTION_CREATE" {
-			var in Interaction
+			var in dctl.Interaction
 			if err := json.Unmarshal(p.D, &in); err == nil {
 				select {
 				case g.Interactions <- in:

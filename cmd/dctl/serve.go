@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/gateway"
 	healthpkg "github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/state"
 	"github.com/vskstudio/dctl/internal/worktree"
@@ -77,7 +78,7 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 
 	// Reconnect loop: a dropped connection just re-IDENTIFYs (no resume).
 	for ctx.Err() == nil {
-		gw := dctl.NewGateway(c, health)
+		gw := gateway.NewGateway(c, health)
 		errCh := make(chan error, 1)
 		go func() { errCh <- gw.Run(ctx) }()
 	dispatch:
