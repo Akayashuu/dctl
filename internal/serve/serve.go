@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/forge"
 	"github.com/vskstudio/dctl/internal/gateway"
 	"github.com/vskstudio/dctl/internal/handler"
 	"github.com/vskstudio/dctl/internal/health"
@@ -104,12 +105,9 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 		fmt.Fprintf(os.Stderr, "dctl serve: instance %q\n", instID)
 	}
 
-	repo := st.Repo
-	if repo == "" {
-		repo, _ = os.Getwd()
-	}
-	wt := worktree.NewWorktreer(ctx, repo, instID)
-	hdl := handler.NewHandler(c, sup, wt, st, o.DefaultCmd)
+	wt := worktree.NewWorktreer(ctx, instID)
+	fg := forge.New()
+	hdl := handler.NewHandler(c, sup, wt, fg, st, o.DefaultCmd)
 
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)

@@ -140,18 +140,33 @@ func dctlCommands() []map[string]any {
 				"options": []map[string]any{
 					{"name": "channel", "description": "Category or forum", "type": typeChan, "required": true},
 				}},
+			{"name": "workspace", "description": "Set the workspace root holding projects", "type": typeSub,
+				"options": []map[string]any{
+					{"name": "path", "description": "Absolute path to the workspace dir", "type": typeStr, "required": true},
+				}},
 		}},
 		{"name": "session", "description": "Manage Claude sessions", "options": []map[string]any{
 			{"name": "create", "description": "Create a session", "type": typeSub, "options": []map[string]any{
 				{"name": "name", "description": "Session name", "type": typeStr, "required": true},
 				{"name": "cmd", "description": "Override bridged command", "type": typeStr},
 				{"name": "shared", "description": "Run in the main checkout (no worktree)", "type": typeBool},
+				{"name": "project", "description": "Workspace project to start from (see /workspace list)", "type": typeStr},
+				{"name": "clone", "description": "Remote repo to clone first (owner/name or URL)", "type": typeStr},
 			}},
 			{"name": "close", "description": "Close a session", "type": typeSub, "options": []map[string]any{
 				{"name": "name", "description": "Session name", "type": typeStr, "required": true},
 				{"name": "force", "description": "Discard uncommitted worktree changes", "type": typeBool},
 			}},
 			{"name": "list", "description": "List active sessions", "type": typeSub},
+		}},
+		{"name": "workspace", "description": "Inspect the workspace", "options": []map[string]any{
+			{"name": "list", "description": "List local git projects in the workspace", "type": typeSub},
+			{"name": "remotes", "description": "List remote repos via gh/glab", "type": typeSub, "options": []map[string]any{
+				{"name": "forge", "description": "Limit to one forge", "type": typeStr, "choices": []map[string]any{
+					{"name": "github", "value": "github"},
+					{"name": "gitlab", "value": "gitlab"},
+				}},
+			}},
 		}},
 		{"name": "allow", "description": "Manage the command allowlist", "options": []map[string]any{
 			{"name": "add", "description": "Allow a user", "type": typeSub, "options": []map[string]any{
