@@ -74,3 +74,39 @@ func TestSessionMutations(t *testing.T) {
 		t.Fatal("a should be gone")
 	}
 }
+
+func TestQualifiedName(t *testing.T) {
+	tests := []struct {
+		name       string
+		instanceID string
+		logical    string
+		want       string
+	}{
+		{"namespaced", "alice", "foo", "alice__foo"},
+		{"legacy-empty-id", "", "foo", "foo"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewState(filepath.Join(t.TempDir(), "s.json"))
+			s.InstanceID = tt.instanceID
+			if got := s.QualifiedName(tt.logical); got != tt.want {
+				t.Fatalf("QualifiedName(%q) with id %q = %q, want %q", tt.logical, tt.instanceID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSetInstanceIDPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "s.json")
+	s := NewState(path)
+	if err := s.SetInstanceID("alice"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.InstanceID != "alice" {
+		t.Fatalf("InstanceID not persisted: %q", got.InstanceID)
+	}
+}

@@ -32,6 +32,7 @@ type State struct {
 	Repo            string     `json:"repo,omitempty"` // project sessions operate on; defaults to daemon cwd
 	Sessions        []Session  `json:"sessions"`
 	StatusMessageID string     `json:"statusMessageID,omitempty"` // cached id of the status embed
+	InstanceID      string     `json:"instanceID,omitempty"`      // per-daemon namespace for global resources; "" = legacy
 }
 
 // NewState returns an empty state bound to path (not yet written).
@@ -174,4 +175,25 @@ func (s *State) SnapshotSessions() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Session(nil), s.Sessions...)
+}
+
+// QualifiedName maps a logical session name to the name used on global resources
+// (Discord title): "<InstanceID>__<name>". In legacy mode (empty InstanceID) it
+// returns the bare logical name, preserving pre-namespacing behavior.
+func (s *State) QualifiedName(name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.InstanceID == "" {
+		return name
+	}
+	return s.InstanceID + "__" + name
+}
+
+// SetInstanceID records the per-daemon instance id and persists. The id is meant
+// to be frozen after first resolution; callers enforce that invariant.
+func (s *State) SetInstanceID(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.InstanceID = id
+	return s.saveLocked()
 }
