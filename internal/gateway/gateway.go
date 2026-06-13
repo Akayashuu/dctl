@@ -1,4 +1,4 @@
-package dctl
+package gateway
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/health"
 )
 
 const gatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -25,21 +27,23 @@ type gwPayload struct {
 // surfaces INTERACTION_CREATE events on Interactions. It records heartbeat ACKs
 // into Health (when non-nil) so liveness reflects pure transport state.
 type Gateway struct {
-	c            *Client
-	Interactions chan Interaction
-	Health       *Health
+	c            *dctl.Client
+	token        string
+	Interactions chan dctl.Interaction
+	Health       *health.Health
 }
 
-// NewGateway builds a Gateway for client c. health may be nil.
-func NewGateway(c *Client, health *Health) *Gateway {
-	return &Gateway{c: c, Interactions: make(chan Interaction, 16), Health: health}
+// NewGateway builds a Gateway for client c, authenticating the websocket
+// IDENTIFY with token (the same bot token c was built with). h may be nil.
+func NewGateway(c *dctl.Client, token string, h *health.Health) *Gateway {
+	return &Gateway{c: c, token: token, Interactions: make(chan dctl.Interaction, 16), Health: h}
 }
 
 // Run connects and processes events until ctx is cancelled or the connection
 // drops. On connection loss it returns an error; the caller reconnects.
 func (g *Gateway) Run(ctx context.Context) error {
 	if !g.c.Enabled() {
-		return ErrDisabled
+		return dctl.ErrDisabled
 	}
 	conn, _, err := websocket.Dial(ctx, gatewayURL, nil)
 	if err != nil {
@@ -64,7 +68,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 	identify := map[string]any{
 		"op": 2,
 		"d": map[string]any{
-			"token":      g.c.token,
+			"token":      g.token,
 			"intents":    intentGuilds,
 			"properties": map[string]any{"os": "linux", "browser": "dctl", "device": "dctl"},
 		},
@@ -99,7 +103,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 			g.Health.HeartbeatAck(time.Now())
 		}
 		if p.Op == 0 && p.T == "INTERACTION_CREATE" {
-			var in Interaction
+			var in dctl.Interaction
 			if err := json.Unmarshal(p.D, &in); err == nil {
 				select {
 				case g.Interactions <- in:

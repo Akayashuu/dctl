@@ -30,7 +30,8 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 
-	client := dctl.New(os.Getenv("DISCORD_BOT_TOKEN"), os.Getenv("DISCORD_CHANNEL_ID"))
+	token := os.Getenv("DISCORD_BOT_TOKEN")
+	client := dctl.New(token, os.Getenv("DISCORD_CHANNEL_ID"))
 	ctx := context.Background()
 
 	var err error
@@ -52,7 +53,7 @@ func main() {
 	case "channel":
 		err = runChannel(ctx, client, args)
 	case "serve":
-		err = runServe(ctx, client, args)
+		err = runServe(ctx, client, token, args)
 	case "-h", "--help", "help":
 		usage()
 		return

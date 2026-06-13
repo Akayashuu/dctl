@@ -1,4 +1,4 @@
-package dctl
+package health
 
 import (
 	"testing"

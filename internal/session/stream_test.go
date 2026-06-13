@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"bufio"
@@ -10,11 +10,11 @@ import (
 )
 
 func TestResponderSelection(t *testing.T) {
-	noop := func(ctx context.Context, m dctlMessage) (string, error) { return "x", nil }
-	if _, ok := newResponder(context.Background(), false, "foo", "", noop).(*oneShotResponder); !ok {
+	noop := func(ctx context.Context, m DctlMessage) (string, error) { return "x", nil }
+	if _, ok := NewResponder(context.Background(), false, "foo", "", noop).(*oneShotResponder); !ok {
 		t.Fatal("stream=false should yield oneShotResponder")
 	}
-	if _, ok := newResponder(context.Background(), true, "claude", "", noop).(*streamResponder); !ok {
+	if _, ok := NewResponder(context.Background(), true, "claude", "", noop).(*streamResponder); !ok {
 		t.Fatal("stream=true should yield streamResponder")
 	}
 }

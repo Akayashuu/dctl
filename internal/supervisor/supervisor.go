@@ -1,4 +1,4 @@
-package main
+package supervisor
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 // Supervisor manages one child `dctl bridge` process per session.
@@ -25,7 +25,7 @@ func NewSupervisor(ctx context.Context, selfBin string) *Supervisor {
 }
 
 // Start launches a supervised bridge for sess (idempotent per name).
-func (s *Supervisor) Start(sess dctl.Session) error {
+func (s *Supervisor) Start(sess state.Session) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, running := s.cancels[sess.Name]; running {
@@ -48,7 +48,7 @@ func (s *Supervisor) Stop(name string) error {
 	return nil
 }
 
-func (s *Supervisor) runLoop(ctx context.Context, sess dctl.Session) {
+func (s *Supervisor) runLoop(ctx context.Context, sess state.Session) {
 	for {
 		if ctx.Err() != nil {
 			return

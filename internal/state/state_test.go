@@ -1,4 +1,4 @@
-package dctl
+package state
 
 import (
 	"path/filepath"
