@@ -38,17 +38,18 @@ A new top-level command. Responsibilities:
 - **Interaction handler**: routes each interaction to a handler, replies via the
   interaction-callback REST endpoint. Errors and allowlist denials reply
   *ephemeral* (visible only to the invoker).
-- **Supervisor**: for each active session, spawn a child `dctl bridge` process
-  (reusing the existing bridge) and keep it alive (restart on crash). Sessions are
-  persisted, so they are respawned when the daemon restarts.
+- **Supervisor**: for each active session, create its git worktree (unless
+  `shared`), spawn a child `dctl bridge` process in that worktree (reusing the
+  existing bridge) and keep it alive (restart on crash). Sessions are persisted, so
+  they are respawned — into their existing worktree — when the daemon restarts.
 
 ### Slash commands
 
 | Command | Effect |
 |---|---|
 | `/set home <channel>` | Set the category **or** forum that contains sessions. Auto-detect type. |
-| `/session <name> [cmd]` | Create a text channel under the home category **or** a forum post; start a bridge on it; register the session. `cmd` optional (defaults to Claude). |
-| `/session close <name>` | Stop the bridge and archive the channel/post; deregister. |
+| `/session <name> [cmd] [shared]` | Create a text channel under the home category **or** a forum post; start a bridge on it; register the session. `cmd` optional (defaults to Claude). **By default the session runs in its own git worktree** (isolation); pass `shared:true` to run in the daemon's main checkout instead. |
+| `/session close <name> [force]` | Stop the bridge, remove its worktree (refuses if dirty unless `force:true`), archive the channel/post; deregister. |
 | `/session list` | List active sessions. |
 | `/allow add\|remove\|list [user]` | Manage the allowlist. |
 
@@ -64,12 +65,34 @@ Seeded with `343535234303787009` (akayashuu) by default.
 {
   "home":     { "id": "...", "type": "category" | "forum" },
   "allow":    ["343535234303787009"],
-  "sessions": [ { "name": "...", "channelID": "...", "type": "text|forum", "cmd": "..." } ]
+  "repo":     "/abs/path/to/project",
+  "sessions": [ { "name": "...", "channelID": "...", "type": "text|forum",
+                  "cmd": "...", "worktree": "/abs/path/.dctl-sessions/<name>" } ]
 }
 ```
 
-Load on startup, save on every mutation. The store is a small, independently
-testable unit.
+`repo` is the project the sessions operate on (defaults to the daemon's working
+directory; overridable). `worktree` is empty for a `shared` session. Load on
+startup, save on every mutation. The store is a small, independently testable unit.
+
+### Worktree isolation (default)
+
+Each session gets its **own git worktree** so concurrent Claude sessions never
+clobber each other's working tree, branch, or index. The supervisor owns the
+lifecycle:
+
+- **On create:** `git -C <repo> worktree add <repo>/.dctl-sessions/<name> -b session/<name>`
+  (from the current HEAD). The child `dctl bridge` runs with `cwd` = that worktree,
+  so `--cmd` (e.g. `claude -p --continue`) operates in isolation. `.dctl-sessions/`
+  is git-ignored.
+- **`shared:true`** skips worktree creation and runs the bridge in `repo` directly
+  — for sessions that must see the live checkout.
+- **On close:** stop the bridge, then `git worktree remove`. If the worktree has
+  **uncommitted changes**, don't destroy them: reply ephemeral with the dirty
+  status and require `/session close <name> force:true` to discard (the branch
+  `session/<name>` is left intact either way so work is recoverable).
+- **Not a git repo / git missing:** fall back to a `shared` session and warn in the
+  ephemeral reply, rather than failing the create.
 
 ### Health & status (bot/daemon liveness)
 
@@ -134,6 +157,10 @@ Discord  ──INTERACTION_CREATE──▶  Gateway client  ──▶  handler
 - Discord REST failures (e.g. missing Manage Channels) → ephemeral error with the
   Discord message surfaced.
 - Child bridge crash → supervisor restarts it; repeated failures logged to stderr.
+- Dirty worktree on close → ephemeral refusal with the `git status` summary; the
+  `session/<name>` branch is preserved so nothing is lost. `force:true` discards.
+- `worktree add` fails (not a repo, git missing, path exists) → fall back to a
+  shared session with an ephemeral warning, rather than aborting the create.
 
 ## Testing
 
@@ -141,7 +168,11 @@ Discord  ──INTERACTION_CREATE──▶  Gateway client  ──▶  handler
   add/remove/list. Pure unit tests.
 - **Command routing**: feed synthetic `INTERACTION_CREATE` payloads into the
   handler (gateway kept thin) and assert the chosen action + interaction response,
-  including allowlist gating.
+  including allowlist gating and the worktree-vs-`shared` branch.
+- **Worktree lifecycle**: against a temp git repo, assert create adds a worktree +
+  `session/<name>` branch, close removes it, and a dirty worktree blocks close
+  without `force`. Isolate the git calls behind a small interface so they're
+  fakeable.
 - Websocket transport itself is kept minimal and exercised manually / via a fake
   connection; logic lives in testable handlers, not the socket loop.
 - **Health**: the `/health` handler is a pure function of a `Health` value — table
@@ -155,7 +186,8 @@ Discord  ──INTERACTION_CREATE──▶  Gateway client  ──▶  handler
    Includes the `Health` snapshot + `/health` HTTP endpoint (the heartbeat loop is
    already here, so liveness is essentially free at this stage).
 2. **Sessions** — `/session create|close|list` + the supervisor (spawn/restart
-   child bridges) + session persistence. Wire `Sessions` count into `Health`.
+   child bridges) + per-session git worktree (default; `shared` opt-out; dirty-close
+   guard) + session persistence. Wire `Sessions` count into `Health`.
 3. **Status embed** — the self-updating Discord status message (`--status-channel`).
 4. **Forum variant** — sessions as forum posts when `home` is a forum.
 
