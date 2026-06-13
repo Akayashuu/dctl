@@ -103,8 +103,9 @@ type HomeRef struct {
 type Session struct {
 	Name      string `json:"name"`
 	ChannelID string `json:"channelID"`
-	Type      string `json:"type"` // "text" | "forum"
+	Type      string `json:"type"`               // "text" | "forum"
 	Cmd       string `json:"cmd"`
+	Worktree  string `json:"worktree,omitempty"` // abs path; empty for a shared session
 }
 
 // State is the daemon's persisted configuration. All access is mutex-guarded.
@@ -113,6 +114,7 @@ type State struct {
 	path            string     `json:"-"`
 	Home            HomeRef    `json:"home"`
 	Allow           []string   `json:"allow"`
+	Repo            string     `json:"repo,omitempty"` // project sessions operate on; defaults to daemon cwd
 	Sessions        []Session  `json:"sessions"`
 	StatusMessageID string     `json:"statusMessageID,omitempty"` // cached id of the status embed
 }
@@ -409,6 +411,28 @@ func findOpt(opts []InteractionOption, name string) (string, bool) {
 	return "", false
 }
 
+// optBool returns the bool value of a (possibly nested) option, false if absent.
+func optBool(d InteractionData, name string) bool {
+	if b, ok := findBool(d.Options, name); ok {
+		return b
+	}
+	return false
+}
+
+func findBool(opts []InteractionOption, name string) (bool, bool) {
+	for _, o := range opts {
+		if o.Name == name {
+			if b, ok := o.Value.(bool); ok {
+				return b, true
+			}
+		}
+		if b, ok := findBool(o.Options, name); ok {
+			return b, true
+		}
+	}
+	return false, false
+}
+
 // Subcommand returns the name of the first sub-command option, if any.
 func (d InteractionData) Subcommand() (string, []InteractionOption) {
 	for _, o := range d.Options {
@@ -463,13 +487,32 @@ type fakeSup struct{ started, stopped []string }
 func (f *fakeSup) Start(s Session) error { f.started = append(f.started, s.Name); return nil }
 func (f *fakeSup) Stop(name string) error { f.stopped = append(f.stopped, name); return nil }
 
-func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *State) {
+type fakeWT struct {
+	created, removed []string
+	path             string // "" → simulate shared fallback
+	removeErr        error  // simulate dirty worktree
+}
+
+func (f *fakeWT) Create(name string) (string, error) {
+	f.created = append(f.created, name)
+	return f.path, nil
+}
+func (f *fakeWT) Remove(name string, force bool) error {
+	if f.removeErr != nil && !force {
+		return f.removeErr
+	}
+	f.removed = append(f.removed, name)
+	return nil
+}
+
+func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *fakeWT, *State) {
 	t.Helper()
 	d := &fakeDiscord{homeType: homeType}
 	sup := &fakeSup{}
+	wt := &fakeWT{path: "/wt/x"}
 	st := NewState(t.TempDir() + "/s.json")
 	st.AddAllow("owner")
-	return NewHandler(d, sup, st, "claude"), d, sup, st
+	return NewHandler(d, sup, wt, st, "claude"), d, sup, wt, st
 }
 
 func it(user, cmd string, sub string, opts ...InteractionOption) Interaction {
@@ -572,18 +615,26 @@ type supervisor interface {
 	Stop(name string) error
 }
 
+// worktrees owns per-session git worktree lifecycle. Create returns the worktree
+// path ("" + nil error means "fall back to shared", e.g. not a git repo).
+type worktrees interface {
+	Create(name string) (path string, err error)
+	Remove(name string, force bool) error
+}
+
 // Handler routes slash-command interactions to actions.
 type Handler struct {
 	d          discord
 	sup        supervisor
+	wt         worktrees
 	st         *State
 	defaultCmd string
 }
 
 // NewHandler builds a Handler. defaultCmd is the bridge command used when a
 // session is created without an explicit cmd (e.g. "claude -p --continue").
-func NewHandler(d discord, sup supervisor, st *State, defaultCmd string) *Handler {
-	return &Handler{d: d, sup: sup, st: st, defaultCmd: defaultCmd}
+func NewHandler(d discord, sup supervisor, wt worktrees, st *State, defaultCmd string) *Handler {
+	return &Handler{d: d, sup: sup, wt: wt, st: st, defaultCmd: defaultCmd}
 }
 
 func deny() Response  { return Response{Content: "⛔ Not authorized.", Ephemeral: true} }
@@ -666,20 +717,36 @@ func (h *Handler) sessionCreate(ctx context.Context, in Interaction) Response {
 	if c, ok := in.Data.Opt("cmd"); ok && c != "" {
 		cmd = c
 	}
+	// Worktree isolation by default; shared:true runs in the main checkout.
+	shared := optBool(in.Data, "shared")
+	var worktree, note string
+	if !shared {
+		path, err := h.wt.Create(name)
+		if err != nil {
+			return errf("worktree: %v", err)
+		}
+		if path == "" {
+			note = " (shared — not a git repo)"
+		} else {
+			worktree = path
+		}
+	}
 	var sess Session
 	switch home.Type {
 	case "category":
 		ch, err := h.d.CreateChannelUnder(ctx, home.ID, name)
 		if err != nil {
+			_ = h.wt.Remove(name, true) // roll back the worktree we just made
 			return errf("create channel: %v", err)
 		}
-		sess = Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd}
+		sess = Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, name, "Session **"+name+"** started.")
 		if err != nil {
+			_ = h.wt.Remove(name, true)
 			return errf("create forum post: %v", err)
 		}
-		sess = Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd}
+		sess = Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree}
 	default:
 		return errf("home type %q unsupported", home.Type)
 	}
@@ -689,7 +756,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in Interaction) Response {
 	if err := h.sup.Start(sess); err != nil {
 		return errf("start bridge: %v", err)
 	}
-	return Response{Content: fmt.Sprintf("✅ Session **%s** running on <#%s>.", name, sess.ChannelID), Ephemeral: true}
+	return Response{Content: fmt.Sprintf("✅ Session **%s** running on <#%s>%s.", name, sess.ChannelID, note), Ephemeral: true}
 }
 
 func (h *Handler) sessionClose(ctx context.Context, in Interaction) Response {
@@ -702,6 +769,12 @@ func (h *Handler) sessionClose(ctx context.Context, in Interaction) Response {
 		return errf("no session %q", name)
 	}
 	_ = h.sup.Stop(name)
+	if sess.Worktree != "" {
+		force := optBool(in.Data, "force")
+		if err := h.wt.Remove(name, force); err != nil {
+			return errf("%v — commit, or close with force:true to discard (branch session/%s is kept)", err, name)
+		}
+	}
 	if err := h.d.ArchiveChannel(ctx, sess.ChannelID); err != nil {
 		return errf("archive: %v", err)
 	}
@@ -1388,6 +1461,115 @@ git add cmd/dctl/supervisor.go
 git commit -m "feat(serve): bridge supervisor (spawn/restart per session)"
 ```
 
+### Task 9b: Worktreer (git worktree per session)
+
+**Files:**
+- Create: `cmd/dctl/worktree.go`
+
+Implements the `dctl.worktrees` interface. Worktrees live under `<repo>/.dctl-sessions/<name>` on branch `session/<name>`. Not-a-git-repo / git-missing → `Create` returns `("", nil)` so the handler falls back to a shared session. `Remove` refuses a dirty worktree unless `force`, and always leaves the branch intact.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+)
+
+// Worktreer manages git worktrees rooted at repo. Implements dctl.worktrees.
+type Worktreer struct {
+	ctx  context.Context
+	repo string
+}
+
+func NewWorktreer(ctx context.Context, repo string) *Worktreer { return &Worktreer{ctx: ctx, repo: repo} }
+
+func (w *Worktreer) isGitRepo() bool {
+	cmd := exec.CommandContext(w.ctx, "git", "-C", w.repo, "rev-parse", "--git-dir")
+	return cmd.Run() == nil
+}
+
+func (w *Worktreer) path(name string) string {
+	return filepath.Join(w.repo, ".dctl-sessions", name)
+}
+
+// Create adds a worktree on branch session/<name>. Returns ("", nil) when repo
+// is not a git repo (caller falls back to shared).
+func (w *Worktreer) Create(name string) (string, error) {
+	if !w.isGitRepo() {
+		return "", nil
+	}
+	p := w.path(name)
+	out, err := exec.CommandContext(w.ctx, "git", "-C", w.repo,
+		"worktree", "add", p, "-b", "session/"+name).CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("worktree add: %s", strings.TrimSpace(string(out)))
+	}
+	return p, nil
+}
+
+// Remove removes the worktree. If it has uncommitted changes and !force, it
+// refuses with the status. The branch session/<name> is always left intact.
+func (w *Worktreer) Remove(name string, force bool) error {
+	p := w.path(name)
+	if !force {
+		out, _ := exec.CommandContext(w.ctx, "git", "-C", p, "status", "--porcelain").Output()
+		if strings.TrimSpace(string(out)) != "" {
+			return fmt.Errorf("worktree %q has uncommitted changes", name)
+		}
+	}
+	args := []string{"-C", w.repo, "worktree", "remove", p}
+	if force {
+		args = append(args, "--force")
+	}
+	out, err := exec.CommandContext(w.ctx, "git", args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("worktree remove: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+```
+
+Add `.dctl-sessions/` to the repo `.gitignore` (Task 12).
+
+**Supervisor change:** the child bridge must run with `cwd` = the session's worktree. In `cmd/dctl/supervisor.go`, set `cmd.Dir = sess.Worktree` when non-empty:
+
+```go
+		cmd := exec.CommandContext(ctx, s.selfBin, "bridge",
+			"-c", sess.ChannelID, "--cmd", sess.Cmd)
+		if sess.Worktree != "" {
+			cmd.Dir = sess.Worktree
+		}
+```
+
+**Slash options:** in `dctlCommands()` add to `session create` a `{"name":"shared","type":5}` (BOOLEAN) option, and to `session close` a `{"name":"force","type":5}` option.
+
+**serve wiring:** build the Worktreer and pass it to `NewHandler`:
+
+```go
+	repo := st.Repo
+	if repo == "" {
+		repo, _ = os.Getwd()
+	}
+	wt := NewWorktreer(ctx, repo)
+	h := dctl.NewHandler(c, sup, wt, st, *defaultCmd)
+```
+
+**Test additions** (`handler_test.go`): worktree is created on `session create` (assert `wt.created`), `shared:true` skips it, dirty close without force is refused (`fakeWT.removeErr` set) and removed with force. (The `newTestHandler` helper already returns `*fakeWT`.)
+
+- [ ] **Step 1:** Write `cmd/dctl/worktree.go` as above.
+- [ ] **Step 2:** `go build ./...` → success.
+- [ ] **Step 3:** Add the worktree handler tests; `go test ./...` → PASS.
+- [ ] **Step 4: Commit**
+
+```bash
+git add cmd/dctl/worktree.go cmd/dctl/supervisor.go interactions.go handler_test.go
+git commit -m "feat(serve): git worktree isolation per session (shared/force opts)"
+```
+
 ### Task 10: `dctl serve` command + wiring
 
 **Files:**
@@ -1447,7 +1629,12 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 	}
 	health.SetSessions(len(st.SnapshotSessions()))
 
-	h := dctl.NewHandler(c, sup, st, *defaultCmd)
+	repo := st.Repo
+	if repo == "" {
+		repo, _ = os.Getwd()
+	}
+	wt := NewWorktreer(ctx, repo)
+	h := dctl.NewHandler(c, sup, wt, st, *defaultCmd)
 
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)
