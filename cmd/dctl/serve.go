@@ -11,6 +11,7 @@ import (
 	"github.com/vskstudio/dctl"
 	healthpkg "github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/state"
+	"github.com/vskstudio/dctl/internal/worktree"
 )
 
 func defaultStatePath() string {
@@ -57,7 +58,7 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 	if repo == "" {
 		repo, _ = os.Getwd()
 	}
-	wt := NewWorktreer(ctx, repo)
+	wt := worktree.NewWorktreer(ctx, repo)
 	h := dctl.NewHandler(c, sup, wt, st, *defaultCmd)
 
 	if err := c.RegisterCommands(ctx); err != nil {
