@@ -43,5 +43,9 @@ func Resolve(explicit, owner string) (string, error) {
 		}
 		return explicit, nil
 	}
-	return Slugify(owner), nil
+	derived := Slugify(owner)
+	if derived != "" && !Validate(derived) {
+		return "", fmt.Errorf("invalid DCTL_OWNER_ID %q: derived id %q is not a valid slug", owner, derived)
+	}
+	return derived, nil
 }
