@@ -1,4 +1,4 @@
-package main
+package serve
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
-	healthpkg "github.com/vskstudio/dctl/internal/health"
+	"github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/state"
 )
 
 const healthWindow = 90 * time.Second
 
 // serveHealth runs a tiny HTTP server exposing GET /health (200 online / 503 down).
-func serveHealth(ctx context.Context, addr string, h *healthpkg.Health) {
+func serveHealth(ctx context.Context, addr string, h *health.Health) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		snap := h.Snapshot(time.Now(), healthWindow)
@@ -34,7 +34,7 @@ func serveHealth(ctx context.Context, addr string, h *healthpkg.Health) {
 }
 
 // pingLoop records an independent REST reachability latency every 30s.
-func pingLoop(ctx context.Context, c *dctl.Client, h *healthpkg.Health) {
+func pingLoop(ctx context.Context, c *dctl.Client, h *health.Health) {
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
 	for {
@@ -51,7 +51,7 @@ func pingLoop(ctx context.Context, c *dctl.Client, h *healthpkg.Health) {
 }
 
 // statusLoop maintains a single self-updating status embed in channelID.
-func statusLoop(ctx context.Context, c *dctl.Client, st *state.State, h *healthpkg.Health, channelID string) {
+func statusLoop(ctx context.Context, c *dctl.Client, st *state.State, h *health.Health, channelID string) {
 	t := time.NewTicker(60 * time.Second)
 	defer t.Stop()
 	render := func() {
