@@ -35,12 +35,26 @@ session per message.
 | `-c CHANNEL` | `DISCORD_CHANNEL_ID` | Channel to bridge. |
 | `--ensure NAME` | `prospector` | If no channel set, create/reuse this one. |
 | `-i N` | `5` | Poll interval (seconds). |
-| `--state FILE` | — | Persist last-seen id so a restart doesn't replay history. |
-| `--after ID` | — | Start after this id (overrides `--state`). |
+| `--state FILE` | — | Persist last-seen id. **Authoritative**: a restart resumes exactly here and never replays handled messages. Always pass it. |
+| `--after ID` | — | Seeds the start id for the **first run only** (ignored once `--state` exists). |
 | `-v` | off | Log activity to stderr. |
 
 Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 `DCTL_MESSAGE_ID`, `DCTL_CHANNEL`.
+
+## Feedback while it works
+
+The command is slow (a Claude run takes tens of seconds), so the bridge reacts to
+each human message **immediately on pickup** with 👀, then swaps it for ✅ once the
+answer is posted (⚠️ on empty/error). The human sees the message was registered
+without waiting. Reactions need the bot's **Add Reactions** permission; if missing
+they're skipped silently (the reply still posts).
+
+**State / no-replay:** the bridge marks a message handled (persists its id) *before*
+running the command. This guarantees a restart never replays — at the cost that a
+crash mid-command drops that one reply rather than re-answering it. Always run with
+`--state`; never bake `--after` into a supervised launcher (it only seeds the first
+run anyway).
 
 ## Keep it running
 
