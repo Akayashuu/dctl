@@ -24,7 +24,7 @@ func defaultStatePath() string {
 func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	statePath := fs.String("state", defaultStatePath(), "path to the daemon state file")
-	defaultCmd := fs.String("cmd", "claude -p --continue", "default bridged command for new sessions")
+	defaultCmd := fs.String("cmd", "claude", "default bridged base command for new sessions (stream-json mode adds -p and the stream flags)")
 	healthAddr := fs.String("health-addr", "", "if set (e.g. :8787), serve GET /health")
 	statusChannel := fs.String("status-channel", "", "if set, maintain a self-updating status embed there")
 	fs.Parse(args)

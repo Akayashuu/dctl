@@ -38,7 +38,9 @@ const (
 func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ExitOnError)
 	ch := channelFlag(fs)
-	cmdStr := fs.String("cmd", "", "command to run per message (message appended as last arg + piped on stdin)")
+	cmdStr := fs.String("cmd", "", "base command (default 'claude' in stream mode; the per-message program in one-shot mode)")
+	stream := fs.Bool("stream", true, "keep one persistent claude stream-json process per session (false = one-shot per message)")
+	model := fs.String("model", "", "model for the persistent claude session (e.g. claude-haiku-4-5-20251001)")
 	ensure := fs.String("ensure", "prospector", "if no channel is set, create/reuse a channel with this name")
 	interval := fs.Int("i", 5, "poll interval in seconds")
 	state := fs.String("state", "", "file to persist the last-seen message id across restarts")
@@ -46,8 +48,8 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	fs.Parse(args)
 
-	if strings.TrimSpace(*cmdStr) == "" {
-		return fmt.Errorf("usage: dctl bridge --cmd '<command>' [-c CHANNEL] [-i 5] [--state FILE]")
+	if !*stream && strings.TrimSpace(*cmdStr) == "" {
+		return fmt.Errorf("usage: dctl bridge --cmd '<command>' --stream=false [-c CHANNEL] [-i 5] [--state FILE]")
 	}
 	if !c.Enabled() {
 		return dctl.ErrDisabled
@@ -82,7 +84,13 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 			last = msgs[len(msgs)-1].ID
 		}
 	}
-	logf(*verbose, "bridge up: cmd=%q interval=%ds last=%s", *cmdStr, *interval, last)
+	logf(*verbose, "bridge up: cmd=%q stream=%v model=%q interval=%ds last=%s", *cmdStr, *stream, *model, *interval, last)
+
+	oneShot := func(ctx context.Context, mm dctlMessage) (string, error) {
+		return runCmd(ctx, *cmdStr, mm)
+	}
+	resp := newResponder(ctx, *stream, *cmdStr, *model, oneShot)
+	defer resp.Close()
 
 	for {
 		msgs, err := c.Read(ctx, *ch, 100, last)
@@ -102,7 +110,12 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 			// up while the (slow) command runs. Best-effort: ignore if the bot
 			// lacks Add Reactions.
 			_ = c.React(ctx, *ch, m.ID, ackEmoji)
-			out, err := runCmd(ctx, *cmdStr, m)
+			out, err := resp.Respond(ctx, dctlMessage{
+				Content:   m.Content,
+				Author:    m.Author.Username,
+				MessageID: m.ID,
+				ChannelID: m.ChannelID,
+			})
 			if err != nil && out == "" {
 				out = "⚠️ " + err.Error()
 			}
@@ -127,15 +140,15 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 
 // runCmd executes cmdStr (split on whitespace) with the message text appended
 // as the final argument, piped on stdin, and exposed via DCTL_* env vars.
-func runCmd(ctx context.Context, cmdStr string, m dctl.Message) (string, error) {
+func runCmd(ctx context.Context, cmdStr string, m dctlMessage) (string, error) {
 	fields := strings.Fields(cmdStr)
 	args := append(fields[1:], m.Content)
 	cmd := exec.CommandContext(ctx, fields[0], args...)
 	cmd.Stdin = strings.NewReader(m.Content)
 	cmd.Env = append(os.Environ(),
 		"DCTL_MSG="+m.Content,
-		"DCTL_AUTHOR="+m.Author.Username,
-		"DCTL_MESSAGE_ID="+m.ID,
+		"DCTL_AUTHOR="+m.Author,
+		"DCTL_MESSAGE_ID="+m.MessageID,
 		"DCTL_CHANNEL="+m.ChannelID,
 	)
 	out, err := cmd.CombinedOutput()
