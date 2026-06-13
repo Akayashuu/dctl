@@ -126,6 +126,60 @@ func (c *Client) EnsureChannel(ctx context.Context, guildID, name string) (*Chan
 	return c.CreateChannel(ctx, guildID, name)
 }
 
+// ChannelType returns the Discord channel-type integer for channelID.
+func (c *Client) ChannelType(ctx context.Context, channelID string) (int, error) {
+	if !c.Enabled() {
+		return 0, ErrDisabled
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, "/channels/"+channelID, nil)
+	if err != nil {
+		return 0, err
+	}
+	var ch Channel
+	if err := c.do(req, &ch); err != nil {
+		return 0, err
+	}
+	return ch.Type, nil
+}
+
+// CreateChannelUnder creates a text channel named name nested under category
+// parentID, in the sole guild.
+func (c *Client) CreateChannelUnder(ctx context.Context, parentID, name string) (*Channel, error) {
+	gid, err := c.resolveGuild(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	req, err := c.newRequest(ctx, http.MethodPost, "/guilds/"+gid+"/channels",
+		map[string]any{"name": name, "type": ChannelText, "parent_id": parentID})
+	if err != nil {
+		return nil, err
+	}
+	var ch Channel
+	if err := c.do(req, &ch); err != nil {
+		return nil, err
+	}
+	return &ch, nil
+}
+
+// ArchiveChannel archives a thread/forum-post, or deletes a plain text channel.
+// Threads support PATCH {archived:true}; text channels do not, so they are deleted.
+func (c *Client) ArchiveChannel(ctx context.Context, channelID string) error {
+	ct, err := c.ChannelType(ctx, channelID)
+	if err != nil {
+		return err
+	}
+	// Thread types: 10 (announcement), 11 (public/forum post), 12 (private).
+	if ct == 10 || ct == 11 || ct == 12 {
+		req, err := c.newRequest(ctx, http.MethodPatch, "/channels/"+channelID,
+			map[string]any{"archived": true})
+		if err != nil {
+			return err
+		}
+		return c.do(req, nil)
+	}
+	return c.DeleteChannel(ctx, channelID)
+}
+
 func (c *Client) resolveGuild(ctx context.Context, guildID string) (string, error) {
 	if !c.Enabled() {
 		return "", ErrDisabled
