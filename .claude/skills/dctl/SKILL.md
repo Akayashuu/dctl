@@ -50,6 +50,16 @@ hot; startup overhead paid once, not per message).
 DCTL_OWNER_ID=<your_user_id> dctl serve [--health-addr :8787] [--status-channel <id>]
 ```
 
+**Run at boot (cross-OS):** `dctl service install` registers `dctl serve` as a
+native boot-started service — systemd **user** unit (Linux), launchd
+**LaunchAgent** (macOS), or **Task Scheduler** onlogon task (Windows) — then
+enables and starts it. Secrets never touch the generated unit: it sources an env
+file (`~/.config/dctl/dctl.env`, mode 0600) that install creates as an empty
+template only if missing (never overwriting an existing one). Fill that file
+with `DISCORD_BOT_TOKEN` etc., then restart. `dctl service uninstall` removes it;
+`dctl service status` reports liveness. Install from an *installed* binary, not
+`go run` (the latter's executable path is a temp file).
+
 - **State** lives in `$DCTL_STATE_DIR/state.json` (default `~/.config/dctl/state.json`):
   home, allowlist, sessions, repo. Sessions are respawned on restart.
 - **Allowlist**: every slash command is gated by a list of Discord user IDs. Seed

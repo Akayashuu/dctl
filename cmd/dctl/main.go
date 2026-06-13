@@ -54,6 +54,8 @@ func main() {
 		err = runChannel(ctx, client, args)
 	case "serve":
 		err = runServe(ctx, client, token, args)
+	case "service":
+		err = runService(ctx, args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -202,6 +204,10 @@ func usage() {
                                               24/7, slash commands (/set home,
                                               /session, /allow), supervises one
                                               bridge per session
+  dctl service <install|uninstall|status> [--health-addr ADDR] [--env-file PATH]
+                                              install the serve daemon as a
+                                              boot-started native service
+                                              (systemd/launchd/Task Scheduler)
 
 env: DISCORD_BOT_TOKEN (required), DISCORD_CHANNEL_ID (default channel)
      DCTL_OWNER_ID (seed allowlist), DCTL_STATE_DIR (state dir)
