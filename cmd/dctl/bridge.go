@@ -31,6 +31,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ExitOnError)
 	ch := channelFlag(fs)
 	cmdStr := fs.String("cmd", "", "command to run per message (message appended as last arg + piped on stdin)")
+	ensure := fs.String("ensure", "prospector", "if no channel is set, create/reuse a channel with this name")
 	interval := fs.Int("i", 5, "poll interval in seconds")
 	state := fs.String("state", "", "file to persist the last-seen message id across restarts")
 	after := fs.String("after", "", "start after this id (overrides state file)")
@@ -42,6 +43,17 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	}
 	if !c.Enabled() {
 		return dctl.ErrDisabled
+	}
+
+	// No channel configured anywhere → create (or reuse) a default one so the
+	// bridge always has somewhere to talk.
+	if *ch == "" && c.DefaultChannel() == "" {
+		created, err := c.EnsureChannel(ctx, "", *ensure)
+		if err != nil {
+			return fmt.Errorf("no channel set and could not create %q: %w", *ensure, err)
+		}
+		*ch = created.ID
+		logf(true, "no default channel — using #%s (%s)", created.Name, created.ID)
 	}
 
 	last := *after

@@ -45,6 +45,8 @@ func main() {
 		err = runWatch(ctx, client, args)
 	case "bridge":
 		err = runBridge(ctx, client, args)
+	case "channel":
+		err = runChannel(ctx, client, args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -153,6 +155,9 @@ func usage() {
                                               link the channel to a command:
                                               run it per human message, post its
                                               stdout back (e.g. a Claude session)
+  dctl channel <list|create|delete|ensure> [name|id] [--guild ID]
+                                              manage channels (create a default
+                                              if missing, delete on request)
 
 env: DISCORD_BOT_TOKEN (required), DISCORD_CHANNEL_ID (default channel)
 `)

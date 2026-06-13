@@ -78,6 +78,19 @@ _, err = c.Reply(ctx, "", msg.ID, "ack")
 `ErrDisabled` from every call, so callers can stay oblivious to whether the
 feature is on.
 
+## Channels
+
+```sh
+dctl channel list                 # id  type  name  (per line)
+dctl channel create prospection   # -> new channel id
+dctl channel ensure prospector    # -> id (existing by that name, or created)
+dctl channel delete <channel_id>  # remove a channel
+```
+
+Guild defaults to the bot's sole server (mono-server); pass `--guild <id>` to
+target another. `dctl bridge` calls `ensure` automatically when no channel is
+configured, so it always has somewhere to talk.
+
 ## License
 
 MIT
