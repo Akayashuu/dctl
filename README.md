@@ -74,6 +74,26 @@ Run it permanently two ways:
 - **systemd (survives reboot/logout):** see [`contrib/dctl-bridge.service`](contrib/dctl-bridge.service).
 - **background (quick test):** `nohup dctl bridge -v &`
 
+## Run the daemon at boot (cross-OS)
+
+`dctl service install` registers the `dctl serve` daemon as a native,
+boot-started service and starts it — on **Linux** a systemd *user* unit
+(`~/.config/systemd/user/dctl.service` + `loginctl enable-linger`), on **macOS**
+a launchd LaunchAgent, on **Windows** a Task Scheduler onlogon task.
+
+```sh
+dctl service install   [--health-addr 127.0.0.1:8787] [--env-file PATH]
+dctl service status    # report whether the service is running
+dctl service uninstall # stop and remove it
+```
+
+Secrets never go into the generated unit: it sources an env file
+(`~/.config/dctl/dctl.env`, mode `0600`) that `install` creates as an empty
+template **only if it doesn't already exist** — it never overwrites your token.
+Fill it in (`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`) and
+restart the service. Install from an installed binary (`go install …`), not
+`go run`, whose executable path is a temporary file.
+
 ## Library
 
 ```go
