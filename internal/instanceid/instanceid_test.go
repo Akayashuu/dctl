@@ -31,3 +31,27 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestSlugify(t *testing.T) {
+	tests := []struct {
+		name  string
+		owner string
+		want  string
+	}{
+		{"snowflake-18-digits", "343535234303787009", "u03787009"},
+		{"short-snowflake-5", "12345", "u12345"},
+		{"exactly-8", "12345678", "u12345678"},
+		{"empty", "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Slugify(tt.owner)
+			if got != tt.want {
+				t.Fatalf("Slugify(%q) = %q, want %q", tt.owner, got, tt.want)
+			}
+			if got != "" && !Validate(got) {
+				t.Fatalf("Slugify(%q) = %q which fails Validate", tt.owner, got)
+			}
+		})
+	}
+}
