@@ -59,8 +59,8 @@ func findOpt(opts []InteractionOption, name string) (string, bool) {
 	return "", false
 }
 
-// optBool returns the bool value of a (possibly nested) option, false if absent.
-func optBool(d InteractionData, name string) bool {
+// OptBool returns the bool value of a (possibly nested) option, false if absent.
+func (d InteractionData) OptBool(name string) bool {
 	if b, ok := findBool(d.Options, name); ok {
 		return b
 	}

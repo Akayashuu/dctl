@@ -10,6 +10,7 @@ import (
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/gateway"
+	handler "github.com/vskstudio/dctl/internal/handler"
 	healthpkg "github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/state"
 	"github.com/vskstudio/dctl/internal/worktree"
@@ -60,7 +61,7 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 		repo, _ = os.Getwd()
 	}
 	wt := worktree.NewWorktreer(ctx, repo)
-	h := dctl.NewHandler(c, sup, wt, st, *defaultCmd)
+	h := handler.NewHandler(c, sup, wt, st, *defaultCmd)
 
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)
