@@ -43,6 +43,8 @@ func main() {
 		err = runRead(ctx, client, args)
 	case "watch":
 		err = runWatch(ctx, client, args)
+	case "bridge":
+		err = runBridge(ctx, client, args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -147,6 +149,10 @@ func usage() {
   dctl reply [-c CHANNEL] <message_id> <text> reply in thread, prints reply id
   dctl read  [-c CHANNEL] [-n 20] [--after ID]  recent messages, one per line
   dctl watch [-c CHANNEL] [-i 10] [--after ID]  stream new messages forever
+  dctl bridge --cmd '<command>' [-i 5] [--state FILE]
+                                              link the channel to a command:
+                                              run it per human message, post its
+                                              stdout back (e.g. a Claude session)
 
 env: DISCORD_BOT_TOKEN (required), DISCORD_CHANNEL_ID (default channel)
 `)

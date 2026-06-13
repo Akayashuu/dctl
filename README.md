@@ -42,6 +42,29 @@ dctl watch -i 10 [--after <id>]     # -> stream new messages forever
 `read`/`watch` print oldest-first (chronological). `--after <id>` returns only
 messages newer than `<id>` — feed back the last id you saw to poll.
 
+## Bind a Claude session to a channel
+
+`dctl bridge` watches a channel and, for each **human** message (bot messages
+are skipped, so it never answers itself), runs a command and posts its stdout
+back as a threaded reply. Point it at a persistent Claude session and the channel
+becomes a chat with Claude:
+
+```sh
+dctl bridge --cmd 'claude -p --continue' --state ~/.local/state/dctl/bridge.last
+```
+
+`--continue` keeps **one** conversation across messages (shared context). The
+message text reaches the command three ways — appended as the last arg, piped on
+stdin, and as env vars `DCTL_MSG` / `DCTL_AUTHOR` / `DCTL_MESSAGE_ID` /
+`DCTL_CHANNEL` — so a wrapper script can do anything. `--state FILE` persists the
+last-seen id so a restart doesn't replay history. Replies over Discord's 2000-char
+limit are chunked.
+
+Run it permanently two ways:
+
+- **systemd (survives reboot/logout):** see [`contrib/dctl-bridge.service`](contrib/dctl-bridge.service).
+- **background (quick test):** `nohup dctl bridge --cmd 'claude -p --continue' -v &`
+
 ## Library
 
 ```go
