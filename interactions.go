@@ -128,11 +128,12 @@ func (c *Client) RegisterCommands(ctx context.Context) error {
 // dctlCommands is the declarative slash-command set.
 func dctlCommands() []map[string]any {
 	const (
-		typeSub  = 1
-		typeStr  = 3
-		typeBool = 5
-		typeUser = 6
-		typeChan = 7
+		typeSub   = 1
+		typeGroup = 2
+		typeStr   = 3
+		typeBool  = 5
+		typeUser  = 6
+		typeChan  = 7
 	)
 	return []map[string]any{
 		{"name": "set", "description": "dctl settings", "options": []map[string]any{
@@ -158,6 +159,22 @@ func dctlCommands() []map[string]any {
 				{"name": "force", "description": "Discard uncommitted worktree changes", "type": typeBool},
 			}},
 			{"name": "list", "description": "List active sessions", "type": typeSub},
+			{"name": "allow", "description": "Per-session allowlist", "type": typeGroup, "options": []map[string]any{
+				{"name": "add", "description": "Allow a user on this session", "type": typeSub, "options": []map[string]any{
+					{"name": "name", "description": "Session name", "type": typeStr, "required": true},
+					{"name": "user", "description": "User", "type": typeUser, "required": true},
+				}},
+				{"name": "remove", "description": "Remove a user from this session's allowlist", "type": typeSub, "options": []map[string]any{
+					{"name": "name", "description": "Session name", "type": typeStr, "required": true},
+					{"name": "user", "description": "User", "type": typeUser, "required": true},
+				}},
+				{"name": "list", "description": "Show this session's allowlist", "type": typeSub, "options": []map[string]any{
+					{"name": "name", "description": "Session name", "type": typeStr, "required": true},
+				}},
+			}},
+			{"name": "who", "description": "Show who has written in this session", "type": typeSub, "options": []map[string]any{
+				{"name": "name", "description": "Session name", "type": typeStr, "required": true},
+			}},
 		}},
 		{"name": "workspace", "description": "Inspect the workspace", "options": []map[string]any{
 			{"name": "list", "description": "List local git projects in the workspace", "type": typeSub},
