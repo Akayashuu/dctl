@@ -155,11 +155,16 @@ func linuxPlan(c Config) Plan {
 	content := "[Unit]\n" +
 		"Description=dctl Discord daemon\n" +
 		"After=network-online.target\n" +
-		"Wants=network-online.target\n\n" +
+		"Wants=network-online.target\n" +
+		// Don't retry forever if the daemon keeps failing (e.g. a bad token):
+		// give up after 5 failures in 60s rather than spin indefinitely. These
+		// live in [Unit] in modern systemd, not [Service].
+		"StartLimitIntervalSec=60\n" +
+		"StartLimitBurst=5\n\n" +
 		"[Service]\n" +
 		"Type=simple\n" +
 		"EnvironmentFile=-" + c.EnvFile + "\n" + // leading '-' => optional (no boot failure if absent)
-		"ExecStart=" + quoteArgv(c.BinPath, serveArgs(c)) + "\n" +
+		"ExecStart=" + joinQuoted(systemdQuote, c.BinPath, serveArgs(c)) + "\n" +
 		"Restart=always\n" +
 		"RestartSec=3\n\n" +
 		"[Install]\n" +
@@ -190,8 +195,9 @@ func macPlan(c Config) Plan {
 	logPath := filepath.Join(c.Home, ".local", "state", "dctl", "dctl.log")
 	// launchd has no EnvironmentFile, so the program sources the env file in a
 	// login shell before exec'ing dctl — keeps the token out of the plist.
-	run := "set -a; [ -f '" + c.EnvFile + "' ] && . '" + c.EnvFile + "'; exec " +
-		quoteArgv(c.BinPath, serveArgs(c))
+	env := shSingleQuote(c.EnvFile)
+	run := "set -a; [ -f " + env + " ] && . " + env + "; exec " +
+		joinQuoted(shSingleQuote, c.BinPath, serveArgs(c))
 	content := xmlHeader +
 		"<plist version=\"1.0\">\n<dict>\n" +
 		"  <key>Label</key><string>" + macLabel + "</string>\n" +
@@ -223,17 +229,22 @@ func windowsPlan(c Config) Plan {
 	launcher := filepath.Join(c.Home, "AppData", "Local", "dctl", "dctl-serve.cmd")
 	// A .cmd launcher loads the env file (KEY=VALUE lines) then runs dctl, so the
 	// scheduled task never carries the token itself.
+	// setlocal keeps the loaded KEY=VALUE pairs from leaking into the parent
+	// shell; eol=# skips comment lines; tokens=1,* / delims== splits only on the
+	// first '=' so values may themselves contain '='.
 	content := "@echo off\r\n" +
+		"setlocal\r\n" +
 		"if exist \"" + c.EnvFile + "\" (\r\n" +
 		"  for /f \"usebackq eol=# tokens=1,* delims==\" %%a in (\"" + c.EnvFile + "\") do set \"%%a=%%b\"\r\n" +
 		")\r\n" +
-		"\"" + c.BinPath + "\" " + strings.Join(serveArgs(c), " ") + "\r\n"
+		joinQuoted(cmdQuote, c.BinPath, serveArgs(c)) + "\r\n"
 	return Plan{
 		Files: []FileWrite{{Path: launcher, Content: content, Mode: 0o644}, envFileWrite(c)},
 		Commands: []Command{
 			{Argv: []string{"schtasks", "/create", "/tn", winTaskName, "/tr", launcher, "/sc", "onlogon", "/rl", "limited", "/f"}},
 		},
-		Notes: []string{"Edit " + c.EnvFile + " with your token, then re-run or reboot to start the task."},
+		// A logon-scheduled task only runs at the next sign-in, never on install.
+		Notes: []string{"Edit " + c.EnvFile + " with your token; the task runs dctl at your next logon (or run it now: schtasks /run /tn " + winTaskName + ")."},
 	}
 }
 
@@ -279,16 +290,47 @@ func envFileHasToken(path string) bool {
 }
 
 // quoteArgv joins a binary path and its args for an ExecStart line, quoting the
-// binary path if it contains spaces (systemd/sh both accept double quotes).
-func quoteArgv(bin string, args []string) string {
-	b := bin
-	if strings.ContainsAny(bin, " \t") {
-		b = "\"" + bin + "\""
+// command line, applying quote to the binary and every argument so a path or
+// value containing spaces or metacharacters survives the target's parser.
+func joinQuoted(quote func(string) string, bin string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, quote(bin))
+	for _, a := range args {
+		parts = append(parts, quote(a))
 	}
-	if len(args) == 0 {
-		return b
+	return strings.Join(parts, " ")
+}
+
+// systemdQuote quotes a token for a systemd ExecStart line. systemd splits on
+// whitespace unless double-quoted, and treats backslash as an escape inside the
+// quotes, so spaces/quotes/backslashes must be wrapped and escaped.
+func systemdQuote(s string) string {
+	if s == "" {
+		return `""`
 	}
-	return b + " " + strings.Join(args, " ")
+	if !strings.ContainsAny(s, " \t\n\"\\'") {
+		return s
+	}
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(s) + `"`
+}
+
+// shSingleQuote wraps s in single quotes for /bin/sh, escaping embedded single
+// quotes via the '\” idiom — safe for arbitrary content (paths, args).
+func shSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// cmdQuote double-quotes a token for cmd.exe when it contains a space, tab or
+// quote (doubling embedded quotes), so a "Program Files" path stays one token.
+func cmdQuote(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\"") {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // DefaultConfig fills a Config from the current environment (binary path, home,

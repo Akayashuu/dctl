@@ -106,8 +106,8 @@ func TestMacPlan(t *testing.T) {
 	for _, want := range []string{
 		"<key>Label</key><string>com.vskstudio.dctl</string>",
 		"<key>RunAtLoad</key><true/>",
-		". '/home/me/.config/dctl/dctl.env'", // sources the env file
-		"exec /home/me/.local/bin/dctl serve --health-addr 127.0.0.1:8787",
+		". '/home/me/.config/dctl/dctl.env'", // sources the env file (single-quoted)
+		"exec '/home/me/.local/bin/dctl' 'serve' '--health-addr' '127.0.0.1:8787'",
 	} {
 		if !strings.Contains(plist.Content, want) {
 			t.Errorf("plist missing %q\n---\n%s", want, plist.Content)
@@ -129,8 +129,13 @@ func TestWindowsPlan(t *testing.T) {
 	if !strings.HasSuffix(launcher.Path, "dctl-serve.cmd") {
 		t.Fatalf("launcher path = %s", launcher.Path)
 	}
-	if !strings.Contains(launcher.Content, `"C:\Users\me\dctl.exe" serve`) {
+	// A path without spaces is left unquoted (cmd runs it fine).
+	if !strings.Contains(launcher.Content, `C:\Users\me\dctl.exe serve`) {
 		t.Errorf("launcher missing dctl invocation:\n%s", launcher.Content)
+	}
+	// setlocal keeps the loaded vars from leaking into the parent shell.
+	if !strings.Contains(launcher.Content, "setlocal") {
+		t.Errorf("launcher should setlocal to scope env vars:\n%s", launcher.Content)
 	}
 	// The loader must skip the env template's `#` comment lines (cmd's default
 	// eol is `;`, not `#`), or it would run `set` on each comment.
@@ -160,12 +165,55 @@ func TestUnsupportedOS(t *testing.T) {
 	}
 }
 
-func TestQuoteArgvSpaces(t *testing.T) {
-	if got := quoteArgv("/opt/My Apps/dctl", []string{"serve"}); got != `"/opt/My Apps/dctl" serve` {
-		t.Fatalf("quoteArgv = %q", got)
+func TestQuoters(t *testing.T) {
+	// systemd: plain tokens pass through; spaces/quotes get double-quoted and
+	// backslashes & quotes escaped.
+	if got := systemdQuote("/usr/bin/dctl"); got != "/usr/bin/dctl" {
+		t.Errorf("systemdQuote plain = %q", got)
 	}
-	if got := quoteArgv("/usr/bin/dctl", nil); got != "/usr/bin/dctl" {
-		t.Fatalf("quoteArgv = %q", got)
+	if got := systemdQuote(`/opt/My Apps/dctl`); got != `"/opt/My Apps/dctl"` {
+		t.Errorf("systemdQuote spaces = %q", got)
+	}
+	if got := systemdQuote(`a"b\c`); got != `"a\"b\\c"` {
+		t.Errorf("systemdQuote escape = %q", got)
+	}
+
+	// sh: always single-quoted; embedded single quotes use the '\'' idiom.
+	if got := shSingleQuote("/usr/bin/dctl"); got != `'/usr/bin/dctl'` {
+		t.Errorf("shSingleQuote plain = %q", got)
+	}
+	if got := shSingleQuote(`a'b`); got != `'a'\''b'` {
+		t.Errorf("shSingleQuote embedded quote = %q", got)
+	}
+
+	// cmd: plain tokens pass through; spaces get double-quoted, embedded quotes doubled.
+	if got := cmdQuote(`C:\dctl.exe`); got != `C:\dctl.exe` {
+		t.Errorf("cmdQuote plain = %q", got)
+	}
+	if got := cmdQuote(`C:\Program Files\dctl.exe`); got != `"C:\Program Files\dctl.exe"` {
+		t.Errorf("cmdQuote spaces = %q", got)
+	}
+
+	// joinQuoted applies the quoter to bin and every arg.
+	if got := joinQuoted(shSingleQuote, "/b/dctl", []string{"serve", "x y"}); got != `'/b/dctl' 'serve' 'x y'` {
+		t.Errorf("joinQuoted = %q", got)
+	}
+}
+
+// TestArgsWithSpacesAreQuoted: an ExtraArg containing a space must stay a single
+// token in every generated artifact (regression for unquoted arg-joining).
+func TestArgsWithSpacesAreQuoted(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		c := testConfig(goos)
+		c.ExtraArgs = []string{"--status-channel", "chan with space"}
+		p, err := BuildPlan(c)
+		if err != nil {
+			t.Fatalf("plan %s: %v", goos, err)
+		}
+		// The raw, unquoted form must NOT appear adjacent (would be two tokens).
+		if strings.Contains(p.Files[0].Content, "--status-channel chan with space") {
+			t.Errorf("%s leaves a space-bearing arg unquoted:\n%s", goos, p.Files[0].Content)
+		}
 	}
 }
 
