@@ -233,3 +233,55 @@ func TestSessionCloseDirtyForced(t *testing.T) {
 		t.Fatal("session should be removed after forced close")
 	}
 }
+
+func TestSessionCreateUsesQualifiedTitle(t *testing.T) {
+	tests := []struct {
+		name       string
+		instanceID string
+		homeType   int
+		setHome    state.HomeRef
+		logical    string
+		wantTitle  string
+	}{
+		{
+			name:       "category-namespaced",
+			instanceID: "alice",
+			homeType:   dctl.ChannelText,
+			setHome:    state.HomeRef{ID: "cat1", Type: "category"},
+			logical:    "foo",
+			wantTitle:  "alice__foo",
+		},
+		{
+			name:       "forum-namespaced",
+			instanceID: "bob",
+			homeType:   dctl.ChannelForum,
+			setHome:    state.HomeRef{ID: "f1", Type: "forum"},
+			logical:    "foo",
+			wantTitle:  "forum:bob__foo",
+		},
+		{
+			name:       "category-legacy",
+			instanceID: "",
+			homeType:   dctl.ChannelText,
+			setHome:    state.HomeRef{ID: "cat1", Type: "category"},
+			logical:    "foo",
+			wantTitle:  "foo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, d, _, _, st := newTestHandler(t, tt.homeType)
+			st.InstanceID = tt.instanceID
+			st.SetHome(tt.setHome)
+			h.Handle(context.Background(), it("owner", "session", "create",
+				dctl.InteractionOption{Name: "name", Value: tt.logical}))
+			if len(d.created) != 1 || d.created[0] != tt.wantTitle {
+				t.Fatalf("created titles = %+v, want [%q]", d.created, tt.wantTitle)
+			}
+			// State key stays the logical name.
+			if _, ok := st.FindSession(tt.logical); !ok {
+				t.Fatalf("session must be keyed by logical name %q", tt.logical)
+			}
+		})
+	}
+}

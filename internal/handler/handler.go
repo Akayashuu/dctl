@@ -148,17 +148,20 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			worktree = path
 		}
 	}
+	// Logical name stays the state/worktree key; the qualified name namespaces
+	// the Discord title so daemons sharing a home stay distinguishable (Spec §3).
+	title := h.st.QualifiedName(name)
 	var sess state.Session
 	switch home.Type {
 	case "category":
-		ch, err := h.d.CreateChannelUnder(ctx, home.ID, name)
+		ch, err := h.d.CreateChannelUnder(ctx, home.ID, title)
 		if err != nil {
 			_ = h.wt.Remove(name, true) // roll back the worktree we just made
 			return errf("create channel: %v", err)
 		}
 		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree}
 	case "forum":
-		ch, err := h.d.ForumPost(ctx, home.ID, name, "Session **"+name+"** started.")
+		ch, err := h.d.ForumPost(ctx, home.ID, title, "Session **"+title+"** started.")
 		if err != nil {
 			_ = h.wt.Remove(name, true)
 			return errf("create forum post: %v", err)
