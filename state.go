@@ -18,7 +18,7 @@ type HomeRef struct {
 type Session struct {
 	Name      string `json:"name"`
 	ChannelID string `json:"channelID"`
-	Type      string `json:"type"`               // "text" | "forum"
+	Type      string `json:"type"` // "text" | "forum"
 	Cmd       string `json:"cmd"`
 	Worktree  string `json:"worktree,omitempty"` // abs path; empty for a shared session
 }

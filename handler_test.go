@@ -12,7 +12,9 @@ type fakeDiscord struct {
 	homeType int
 }
 
-func (f *fakeDiscord) ChannelType(ctx context.Context, id string) (int, error) { return f.homeType, nil }
+func (f *fakeDiscord) ChannelType(ctx context.Context, id string) (int, error) {
+	return f.homeType, nil
+}
 func (f *fakeDiscord) CreateChannelUnder(ctx context.Context, parentID, name string) (*Channel, error) {
 	f.created = append(f.created, name)
 	return &Channel{ID: "new-" + name, Name: name, Type: ChannelText}, nil
