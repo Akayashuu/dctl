@@ -69,16 +69,20 @@ func TestLinuxPlan(t *testing.T) {
 		t.Fatalf("unit path = %s", unit.Path)
 	}
 	for _, want := range []string{
-		"EnvironmentFile=-/home/me/.config/dctl/dctl.env", // '-' => optional, no boot failure if absent
-		"ExecStart=/home/me/.local/bin/dctl serve --health-addr 127.0.0.1:8787",
+		// The daemon loads the env file itself; the unit just passes --env-file.
+		"ExecStart=/home/me/.local/bin/dctl serve --env-file /home/me/.config/dctl/dctl.env --health-addr 127.0.0.1:8787",
 		"Restart=always",
+		"StartLimitBurst=5", // cap restarts so a bad token can't spin forever
 		"WantedBy=default.target",
 	} {
 		if !strings.Contains(unit.Content, want) {
 			t.Errorf("unit missing %q\n---\n%s", want, unit.Content)
 		}
 	}
-	// The token must never appear in a generated unit.
+	// No EnvironmentFile (sourcing moved into the daemon), and no secret value.
+	if strings.Contains(unit.Content, "EnvironmentFile") {
+		t.Error("unit should not declare EnvironmentFile anymore")
+	}
 	if strings.Contains(unit.Content, "TOKEN=") {
 		t.Error("unit file embeds a secret value")
 	}
@@ -106,12 +110,19 @@ func TestMacPlan(t *testing.T) {
 	for _, want := range []string{
 		"<key>Label</key><string>com.vskstudio.dctl</string>",
 		"<key>RunAtLoad</key><true/>",
-		". '/home/me/.config/dctl/dctl.env'", // sources the env file (single-quoted)
-		"exec '/home/me/.local/bin/dctl' 'serve' '--health-addr' '127.0.0.1:8787'",
+		// launchd execs dctl directly (no shell); each arg is its own <string>.
+		"<string>/home/me/.local/bin/dctl</string>",
+		"<string>serve</string>",
+		"<string>--env-file</string>",
+		"<string>/home/me/.config/dctl/dctl.env</string>",
 	} {
 		if !strings.Contains(plist.Content, want) {
 			t.Errorf("plist missing %q\n---\n%s", want, plist.Content)
 		}
+	}
+	// No shell wrapper anymore.
+	if strings.Contains(plist.Content, "/bin/sh") {
+		t.Errorf("plist should exec dctl directly, not via a shell:\n%s", plist.Content)
 	}
 	assertCmd(t, p, "launchctl load -w")
 }
@@ -129,18 +140,12 @@ func TestWindowsPlan(t *testing.T) {
 	if !strings.HasSuffix(launcher.Path, "dctl-serve.cmd") {
 		t.Fatalf("launcher path = %s", launcher.Path)
 	}
-	// A path without spaces is left unquoted (cmd runs it fine).
-	if !strings.Contains(launcher.Content, `C:\Users\me\dctl.exe serve`) {
+	// The launcher just execs dctl with --env-file; no brittle for/f parsing.
+	if !strings.Contains(launcher.Content, `C:\Users\me\dctl.exe serve --env-file C:\Users\me\.config\dctl\dctl.env`) {
 		t.Errorf("launcher missing dctl invocation:\n%s", launcher.Content)
 	}
-	// setlocal keeps the loaded vars from leaking into the parent shell.
-	if !strings.Contains(launcher.Content, "setlocal") {
-		t.Errorf("launcher should setlocal to scope env vars:\n%s", launcher.Content)
-	}
-	// The loader must skip the env template's `#` comment lines (cmd's default
-	// eol is `;`, not `#`), or it would run `set` on each comment.
-	if !strings.Contains(launcher.Content, "eol=#") {
-		t.Errorf("launcher should skip # comment lines (eol=#):\n%s", launcher.Content)
+	if strings.Contains(launcher.Content, "for /f") {
+		t.Errorf("launcher should not parse the env file in batch anymore:\n%s", launcher.Content)
 	}
 	assertCmd(t, p, "schtasks /create /tn dctl /tr")
 }
@@ -178,14 +183,6 @@ func TestQuoters(t *testing.T) {
 		t.Errorf("systemdQuote escape = %q", got)
 	}
 
-	// sh: always single-quoted; embedded single quotes use the '\'' idiom.
-	if got := shSingleQuote("/usr/bin/dctl"); got != `'/usr/bin/dctl'` {
-		t.Errorf("shSingleQuote plain = %q", got)
-	}
-	if got := shSingleQuote(`a'b`); got != `'a'\''b'` {
-		t.Errorf("shSingleQuote embedded quote = %q", got)
-	}
-
 	// cmd: plain tokens pass through; spaces get double-quoted, embedded quotes doubled.
 	if got := cmdQuote(`C:\dctl.exe`); got != `C:\dctl.exe` {
 		t.Errorf("cmdQuote plain = %q", got)
@@ -195,7 +192,7 @@ func TestQuoters(t *testing.T) {
 	}
 
 	// joinQuoted applies the quoter to bin and every arg.
-	if got := joinQuoted(shSingleQuote, "/b/dctl", []string{"serve", "x y"}); got != `'/b/dctl' 'serve' 'x y'` {
+	if got := joinQuoted(systemdQuote, "/b/dctl", []string{"serve", "x y"}); got != `/b/dctl serve "x y"` {
 		t.Errorf("joinQuoted = %q", got)
 	}
 }

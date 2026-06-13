@@ -54,9 +54,10 @@ DCTL_OWNER_ID=<your_user_id> dctl serve [--health-addr :8787] [--status-channel 
 native boot-started service — systemd **user** unit (Linux), launchd
 **LaunchAgent** (macOS), or **Task Scheduler** onlogon task (Windows) — then
 enables it at boot — and starts it immediately **if a token is already set**.
-Secrets never touch the generated unit: it sources an env file
-(`~/.config/dctl/dctl.env`, mode 0600) that install creates as an empty template
-only if missing (never overwriting an existing one). On a first install (empty
+Secrets never touch the generated unit: the daemon loads an env file
+(`~/.config/dctl/dctl.env`, mode 0600) itself via `serve --env-file` (no shell
+sourcing), and install creates that file as an empty template only if missing
+(never overwriting an existing one). On a first install (empty
 template) it's enabled but **not started** so it can't crash-loop; fill that file
 with `DISCORD_BOT_TOKEN` etc., then start it with the command install prints.
 `dctl service uninstall` removes it;

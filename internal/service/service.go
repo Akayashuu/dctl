@@ -72,9 +72,14 @@ func goos(c Config) string {
 	return runtime.GOOS
 }
 
-// serveArgs builds the `serve …` argv the service runs.
+// serveArgs builds the `serve …` argv the service runs. The daemon loads its
+// own secrets via --env-file (no shell sourcing), so the env file is passed as
+// a plain argument on every platform.
 func serveArgs(c Config) []string {
 	args := []string{"serve"}
+	if c.EnvFile != "" {
+		args = append(args, "--env-file", c.EnvFile)
+	}
 	if c.HealthAddr != "" {
 		args = append(args, "--health-addr", c.HealthAddr)
 	}
@@ -163,7 +168,8 @@ func linuxPlan(c Config) Plan {
 		"StartLimitBurst=5\n\n" +
 		"[Service]\n" +
 		"Type=simple\n" +
-		"EnvironmentFile=-" + c.EnvFile + "\n" + // leading '-' => optional (no boot failure if absent)
+		// The daemon loads the env file itself (serve --env-file), so the unit
+		// needs no EnvironmentFile and the token never appears here.
 		"ExecStart=" + joinQuoted(systemdQuote, c.BinPath, serveArgs(c)) + "\n" +
 		"Restart=always\n" +
 		"RestartSec=3\n\n" +
@@ -193,16 +199,19 @@ func linuxPlan(c Config) Plan {
 func macPlan(c Config) Plan {
 	plist := filepath.Join(c.Home, "Library", "LaunchAgents", macLabel+".plist")
 	logPath := filepath.Join(c.Home, ".local", "state", "dctl", "dctl.log")
-	// launchd has no EnvironmentFile, so the program sources the env file in a
-	// login shell before exec'ing dctl — keeps the token out of the plist.
-	env := shSingleQuote(c.EnvFile)
-	run := "set -a; [ -f " + env + " ] && . " + env + "; exec " +
-		joinQuoted(shSingleQuote, c.BinPath, serveArgs(c))
+	// No shell: launchd execs dctl directly and the daemon loads the env file
+	// itself (serve --env-file). Each argument is its own array element, so
+	// spaces never split a token — just XML-escape each one.
+	argv := append([]string{c.BinPath}, serveArgs(c)...)
+	var progArgs strings.Builder
+	for _, a := range argv {
+		progArgs.WriteString("    <string>" + xmlEscape(a) + "</string>\n")
+	}
 	content := xmlHeader +
 		"<plist version=\"1.0\">\n<dict>\n" +
 		"  <key>Label</key><string>" + macLabel + "</string>\n" +
 		"  <key>ProgramArguments</key>\n  <array>\n" +
-		"    <string>/bin/sh</string>\n    <string>-lc</string>\n    <string>" + xmlEscape(run) + "</string>\n" +
+		progArgs.String() +
 		"  </array>\n" +
 		"  <key>RunAtLoad</key><true/>\n" +
 		"  <key>KeepAlive</key><true/>\n" +
@@ -227,16 +236,11 @@ func macPlan(c Config) Plan {
 
 func windowsPlan(c Config) Plan {
 	launcher := filepath.Join(c.Home, "AppData", "Local", "dctl", "dctl-serve.cmd")
-	// A .cmd launcher loads the env file (KEY=VALUE lines) then runs dctl, so the
-	// scheduled task never carries the token itself.
-	// setlocal keeps the loaded KEY=VALUE pairs from leaking into the parent
-	// shell; eol=# skips comment lines; tokens=1,* / delims== splits only on the
-	// first '=' so values may themselves contain '='.
+	// A tiny .cmd launcher just execs dctl; the daemon loads the env file itself
+	// (serve --env-file), so there's no brittle `for /f` parsing and the task
+	// never carries the token. (schtasks /tr can't quote argv reliably, hence
+	// the wrapper file.)
 	content := "@echo off\r\n" +
-		"setlocal\r\n" +
-		"if exist \"" + c.EnvFile + "\" (\r\n" +
-		"  for /f \"usebackq eol=# tokens=1,* delims==\" %%a in (\"" + c.EnvFile + "\") do set \"%%a=%%b\"\r\n" +
-		")\r\n" +
 		joinQuoted(cmdQuote, c.BinPath, serveArgs(c)) + "\r\n"
 	return Plan{
 		Files: []FileWrite{{Path: launcher, Content: content, Mode: 0o644}, envFileWrite(c)},
@@ -313,12 +317,6 @@ func systemdQuote(s string) string {
 	}
 	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 	return `"` + r.Replace(s) + `"`
-}
-
-// shSingleQuote wraps s in single quotes for /bin/sh, escaping embedded single
-// quotes via the '\” idiom — safe for arbitrary content (paths, args).
-func shSingleQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // cmdQuote double-quotes a token for cmd.exe when it contains a space, tab or

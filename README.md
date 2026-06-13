@@ -87,9 +87,10 @@ dctl service status    # report whether the service is running
 dctl service uninstall # stop and remove it
 ```
 
-Secrets never go into the generated unit: it sources an env file
-(`~/.config/dctl/dctl.env`, mode `0600`) that `install` creates as an empty
-template **only if it doesn't already exist** — it never overwrites your token.
+Secrets never go into the generated unit: the daemon loads an env file
+(`~/.config/dctl/dctl.env`, mode `0600`) itself via `serve --env-file` — no
+shell sourcing on any platform — and `install` creates that file as an empty
+template **only if it doesn't already exist**, so it never overwrites your token.
 On a first install (no token yet) the service is **enabled at boot but not
 started**, so it can't crash-loop against an empty template; fill in
 `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`, then start it with
