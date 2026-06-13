@@ -49,14 +49,19 @@ github.com/vskstudio/dctl
 ├── channels.go        Guild/Channel + channel REST (Channels/Create/Ensure/Delete/SoleGuild)
 ├── threads.go         thread + forum REST (StartThread/CreateForum/ForumPost)
 ├── reactions.go       reaction REST (React/Unreact)
+├── interactions.go    interaction wire types (Interaction/Member/Response/…) + the
+│                        4 daemon REST methods on *Client (AppID/RegisterCommands/
+│                        RespondInteraction/UpsertStatusMessage). STAYS at root:
+│                        these use the unexported newRequest/do plumbing, so moving
+│                        them would force exporting raw HTTP primitives. The DTO
+│                        types are harmless extra surface — prospector ignores them.
 ├── dctl_test.go
 ├── channels_test.go
 │
 ├── internal/
-│   ├── gateway/       package gateway   — websocket client + interaction wire types & REST
-│   │   ├── gateway.go        (from gateway.go)
-│   │   └── interactions.go   (from interactions.go; the 4 *Client interaction
-│   │                          methods become free functions taking *dctl.Client)
+│   ├── gateway/       package gateway   — websocket client only
+│   │   └── gateway.go        (from gateway.go; imports root dctl for the
+│   │                          Interaction type it unmarshals & emits)
 │   ├── health/        package health    — daemon liveness snapshot (Health type)
 │   │   ├── health.go         (from health.go)
 │   │   └── health_test.go
@@ -92,21 +97,24 @@ The single rule, enforced by `internal/` and Go's import checker:
 
 | Package | Imports |
 |---|---|
-| `dctl` (root) | stdlib only |
+| `dctl` (root) | stdlib only (incl. interaction types + their REST methods) |
 | `internal/health` | stdlib only |
 | `internal/state` | stdlib only |
 | `internal/worktree` | stdlib only |
 | `internal/session` | stdlib / os-exec only |
-| `internal/gateway` | `dctl`, `internal/health`, `coder/websocket` |
-| `internal/handler` | `dctl`, `internal/gateway`, `internal/state` |
+| `internal/gateway` | `dctl` (for `Interaction`), `internal/health`, `coder/websocket` |
+| `internal/handler` | `dctl` (Interaction/Response/Channel), `internal/state` |
 | `internal/supervisor` | `internal/state` (for `Session`) |
 | `internal/bridge` | `dctl`, `internal/session` |
 | `internal/serve` | `dctl`, `internal/{gateway,health,state,handler,supervisor,worktree}` |
 
-**Cycle watch — `gateway` ↔ `handler`:** `gateway` owns `Interaction`/`Response`;
-`handler` consumes them, so `handler → gateway` one-way. `gateway` must never
-import `handler`. The existing `gateway.Interactions` channel (drained by `serve`
-into `handler.Handle`) is the seam that keeps this acyclic — preserve it.
+**Cycle watch:** root `dctl` owns the `Interaction`/`Response` DTO types, so both
+`gateway` and `handler` import root `dctl` for them — one-way, no cycle (root
+imports nothing internal). `gateway` never imports `handler`; the existing
+`gateway.Interactions` channel (drained by `serve` into `handler.Handle`) is the
+seam that keeps gateway decoupled from handler. `Session`/`HomeRef` live in
+`internal/state`; handler/supervisor/serve import `state`, which imports none of
+them.
 
 **`Session`/`HomeRef` ownership:** referenced by handler, supervisor, serve. They
 live in `internal/state` (their persistence home); the others import `state`.
@@ -114,12 +122,14 @@ live in `internal/state` (their persistence home); the others import `state`.
 
 ## Files that mix concerns — how they split
 
-- **`interactions.go`** mixes wire types (`Interaction`, `Member`, `Response`,
-  option helpers) with REST methods on `*Client` (`AppID`, `RegisterCommands`,
-  `RespondInteraction`, `UpsertStatusMessage`, `dctlCommands`). The whole file
-  moves to `internal/gateway`; the four `(c *Client)` methods become free
-  functions taking a `*dctl.Client` (e.g. `gateway.RegisterCommands(ctx, c)`) —
-  they are daemon-only and don't belong on the public client.
+- **`interactions.go`** stays at root, unsplit. It mixes wire types
+  (`Interaction`, `Member`, `Response`, option helpers) with REST methods on
+  `*Client` (`AppID`, `RegisterCommands`, `RespondInteraction`,
+  `UpsertStatusMessage`, `dctlCommands`), but the REST methods depend on the
+  unexported `newRequest`/`do` plumbing — extracting them would force exporting
+  raw HTTP primitives, a worse trade. The DTO types are harmless extra public
+  surface (prospector ignores them). Leaving the file intact is the correct,
+  lowest-risk choice.
 - **`cmd/dctl/bridge.go`** mixes flag parsing with the bridge loop. The loop body
   (`runBridge`/`runCmd`/`chunk`/`oneline`/`persist`) moves to `internal/bridge`
   as `bridge.Run(ctx, c, opts)`; `main` keeps a thin `runBridge(args)` that parses
@@ -136,14 +146,25 @@ helpers `channelFlag`/`line`, and the dispatch switch. `serve` and `bridge`
 delegate to `serve.Run` / `bridge.Run`. `channel` stays trivially in `main` (pure
 REST on `c`). `cmd/dctl` drops from ~1100 to ~250 lines, all flag-glue.
 
-## Public API slimming (the only signature change)
+## No signature changes
 
-The four interaction REST methods (`RegisterCommands`, `RespondInteraction`,
-`AppID`, `UpsertStatusMessage`) move off `*Client` and become free functions in
-`internal/gateway`. This ripples into `serve.go` call sites only. **No other
-signature changes** — every other move is package-qualification (`Channel` →
-`dctl.Channel`, `Session` → `state.Session`, etc.). Do the method→function change
-in the same commit as the gateway move so the module never builds broken.
+Every move is **package-qualification only** — no function or method signatures
+change. References gain a package qualifier as code crosses a boundary:
+`Channel` → `dctl.Channel`, `Session`/`HomeRef`/`State` → `state.*`,
+`Health` → `health.Health`, `Interaction`/`Response` → `dctl.*` (they stay at
+root). The interaction REST methods stay on `*dctl.Client` unchanged, so
+`serve`'s call sites (`c.RegisterCommands`, `c.RespondInteraction`, `c.AppID`,
+`c.UpsertStatusMessage`) are untouched.
+
+**One deliberate export:** `optBool`, currently an unexported func in root
+`interactions.go`, is consumed by `handler` (`optBool(in.Data, "shared"/"force")`).
+Once `handler` lives in `internal/handler` it can no longer reach a root-package
+unexported symbol, so `optBool` becomes the exported method
+`(d InteractionData) OptBool(name string) bool` on root, and handler's two call
+sites become `in.Data.OptBool("shared")` / `in.Data.OptBool("force")`. The
+already-exported `Opt`/`Subcommand` methods handler also uses need no change.
+Unexported helpers used only *within* a single moved package (e.g. `stamp` in
+health, `findOpt`/`findBool` in root) stay unexported and move with their file.
 
 ## Error handling
 
