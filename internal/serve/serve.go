@@ -22,6 +22,9 @@ type Options struct {
 	DefaultCmd    string
 	HealthAddr    string
 	StatusChannel string
+	// Token is the bot token used for the gateway IDENTIFY (same value the
+	// client was built with). Sourced from the caller, not read off the client.
+	Token string
 }
 
 // DefaultStatePath returns the default path to the daemon state file.
@@ -77,7 +80,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 
 	// Reconnect loop: a dropped connection just re-IDENTIFYs (no resume).
 	for ctx.Err() == nil {
-		gw := gateway.NewGateway(c, h)
+		gw := gateway.NewGateway(c, o.Token, h)
 		errCh := make(chan error, 1)
 		go func() { errCh <- gw.Run(ctx) }()
 	dispatch:

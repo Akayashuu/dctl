@@ -28,13 +28,15 @@ type gwPayload struct {
 // into Health (when non-nil) so liveness reflects pure transport state.
 type Gateway struct {
 	c            *dctl.Client
+	token        string
 	Interactions chan dctl.Interaction
 	Health       *health.Health
 }
 
-// NewGateway builds a Gateway for client c. h may be nil.
-func NewGateway(c *dctl.Client, h *health.Health) *Gateway {
-	return &Gateway{c: c, Interactions: make(chan dctl.Interaction, 16), Health: h}
+// NewGateway builds a Gateway for client c, authenticating the websocket
+// IDENTIFY with token (the same bot token c was built with). h may be nil.
+func NewGateway(c *dctl.Client, token string, h *health.Health) *Gateway {
+	return &Gateway{c: c, token: token, Interactions: make(chan dctl.Interaction, 16), Health: h}
 }
 
 // Run connects and processes events until ctx is cancelled or the connection
@@ -66,7 +68,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 	identify := map[string]any{
 		"op": 2,
 		"d": map[string]any{
-			"token":      g.c.Token(),
+			"token":      g.token,
 			"intents":    intentGuilds,
 			"properties": map[string]any{"os": "linux", "browser": "dctl", "device": "dctl"},
 		},

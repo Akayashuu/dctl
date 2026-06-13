@@ -62,10 +62,6 @@ func New(token, defaultChannel string, opts ...Option) *Client {
 // Enabled reports whether a bot token is configured.
 func (c *Client) Enabled() bool { return c != nil && c.token != "" }
 
-// Token returns the bot token (empty if disabled). Used by the gateway package
-// to authenticate the websocket IDENTIFY.
-func (c *Client) Token() string { return c.token }
-
 // DefaultChannel returns the configured fan-out / fallback channel id.
 func (c *Client) DefaultChannel() string {
 	if c == nil {

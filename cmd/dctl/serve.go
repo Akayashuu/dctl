@@ -8,7 +8,7 @@ import (
 	"github.com/vskstudio/dctl/internal/serve"
 )
 
-func runServe(ctx context.Context, c *dctl.Client, args []string) error {
+func runServe(ctx context.Context, c *dctl.Client, token string, args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	statePath := fs.String("state", serve.DefaultStatePath(), "path to the daemon state file")
 	defaultCmd := fs.String("cmd", "claude", "default bridged base command for new sessions (stream-json mode adds -p and the stream flags)")
@@ -23,5 +23,6 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 		DefaultCmd:    *defaultCmd,
 		HealthAddr:    *healthAddr,
 		StatusChannel: *statusChannel,
+		Token:         token,
 	})
 }
