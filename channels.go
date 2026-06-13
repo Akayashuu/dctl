@@ -75,11 +75,16 @@ func (c *Client) Channels(ctx context.Context, guildID string) ([]Channel, error
 // CreateChannel creates a text channel named name in guildID (or the sole guild
 // when empty) and returns it.
 func (c *Client) CreateChannel(ctx context.Context, guildID, name string) (*Channel, error) {
+	return c.createChannel(ctx, guildID, name, ChannelText)
+}
+
+// createChannel creates a channel of the given type (see ChannelText/ChannelForum).
+func (c *Client) createChannel(ctx context.Context, guildID, name string, chType int) (*Channel, error) {
 	gid, err := c.resolveGuild(ctx, guildID)
 	if err != nil {
 		return nil, err
 	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/guilds/"+gid+"/channels", map[string]any{"name": name, "type": 0})
+	req, err := c.newRequest(ctx, http.MethodPost, "/guilds/"+gid+"/channels", map[string]any{"name": name, "type": chType})
 	if err != nil {
 		return nil, err
 	}

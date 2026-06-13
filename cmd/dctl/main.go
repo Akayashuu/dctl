@@ -45,6 +45,8 @@ func main() {
 		err = runWatch(ctx, client, args)
 	case "bridge":
 		err = runBridge(ctx, client, args)
+	case "thread":
+		err = runThread(ctx, client, args)
 	case "channel":
 		err = runChannel(ctx, client, args)
 	case "-h", "--help", "help":
@@ -130,6 +132,23 @@ func runWatch(ctx context.Context, c *dctl.Client, args []string) error {
 	}
 }
 
+func runThread(ctx context.Context, c *dctl.Client, args []string) error {
+	fs := flag.NewFlagSet("thread", flag.ExitOnError)
+	ch := channelFlag(fs)
+	fs.Parse(args)
+	rest := fs.Args()
+	if len(rest) < 2 {
+		return fmt.Errorf("usage: dctl thread [-c CHANNEL] <message_id> <name>")
+	}
+	name := strings.TrimSpace(strings.Join(rest[1:], " "))
+	t, err := c.StartThread(ctx, *ch, rest[0], name)
+	if err != nil {
+		return err
+	}
+	fmt.Println(t.ID)
+	return nil
+}
+
 // channelFlag registers -c/--channel on fs and returns the bound pointer.
 func channelFlag(fs *flag.FlagSet) *string {
 	ch := fs.String("channel", "", "channel id (default: DISCORD_CHANNEL_ID)")
@@ -155,9 +174,12 @@ func usage() {
                                               link the channel to a command:
                                               run it per human message, post its
                                               stdout back (e.g. a Claude session)
-  dctl channel <list|create|delete|ensure> [name|id] [--guild ID]
-                                              manage channels (create a default
-                                              if missing, delete on request)
+  dctl thread [-c CHANNEL] <message_id> <name>  open a real thread off a message
+  dctl channel <list|create|post|delete|ensure> [args] [--guild ID]
+                                              manage channels: create [--forum] a
+                                              channel, post <forum_id> <title>
+                                              <content> a forum thread, delete on
+                                              request
 
 env: DISCORD_BOT_TOKEN (required), DISCORD_CHANNEL_ID (default channel)
 `)

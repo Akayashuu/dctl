@@ -17,6 +17,7 @@ func runChannel(ctx context.Context, c *dctl.Client, args []string) error {
 	sub, rest := args[0], args[1:]
 	fs := flag.NewFlagSet("channel", flag.ExitOnError)
 	guild := fs.String("guild", "", "guild id (default: the bot's sole server)")
+	forum := fs.Bool("forum", false, "create a forum channel instead of a text one")
 	fs.Parse(rest)
 	pos := fs.Args()
 
@@ -32,13 +33,27 @@ func runChannel(ctx context.Context, c *dctl.Client, args []string) error {
 		return nil
 	case "create":
 		if len(pos) < 1 {
-			return fmt.Errorf("usage: dctl channel create <name>")
+			return fmt.Errorf("usage: dctl channel create [--forum] <name>")
 		}
-		ch, err := c.CreateChannel(ctx, *guild, pos[0])
+		create := c.CreateChannel
+		if *forum {
+			create = c.CreateForum
+		}
+		ch, err := create(ctx, *guild, pos[0])
 		if err != nil {
 			return err
 		}
 		fmt.Println(ch.ID)
+		return nil
+	case "post":
+		if len(pos) < 3 {
+			return fmt.Errorf("usage: dctl channel post <forum_id> <title> <content>")
+		}
+		t, err := c.ForumPost(ctx, pos[0], pos[1], pos[2])
+		if err != nil {
+			return err
+		}
+		fmt.Println(t.ID)
 		return nil
 	case "ensure":
 		if len(pos) < 1 {
@@ -60,6 +75,6 @@ func runChannel(ctx context.Context, c *dctl.Client, args []string) error {
 		fmt.Println("deleted")
 		return nil
 	default:
-		return fmt.Errorf("unknown channel subcommand %q (list|create|delete|ensure)", sub)
+		return fmt.Errorf("unknown channel subcommand %q (list|create|post|delete|ensure)", sub)
 	}
 }
