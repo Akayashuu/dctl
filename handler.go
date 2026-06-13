@@ -3,6 +3,8 @@ package dctl
 import (
 	"context"
 	"fmt"
+
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 // discord is the subset of Client the Handler needs (injected so routing is testable).
@@ -15,7 +17,7 @@ type discord interface {
 
 // supervisor starts/stops the bridge process backing a session.
 type supervisor interface {
-	Start(s Session) error
+	Start(s state.Session) error
 	Stop(name string) error
 }
 
@@ -31,13 +33,13 @@ type Handler struct {
 	d          discord
 	sup        supervisor
 	wt         worktrees
-	st         *State
+	st         *state.State
 	defaultCmd string
 }
 
 // NewHandler builds a Handler. defaultCmd is the bridge command used when a
 // session is created without an explicit cmd (e.g. "claude -p --continue").
-func NewHandler(d discord, sup supervisor, wt worktrees, st *State, defaultCmd string) *Handler {
+func NewHandler(d discord, sup supervisor, wt worktrees, st *state.State, defaultCmd string) *Handler {
 	return &Handler{d: d, sup: sup, wt: wt, st: st, defaultCmd: defaultCmd}
 }
 
@@ -85,7 +87,7 @@ func (h *Handler) handleSet(ctx context.Context, in Interaction) Response {
 	default:
 		return errf("home must be a category or a forum (got type %d)", ct)
 	}
-	if err := h.st.SetHome(HomeRef{ID: id, Type: typ}); err != nil {
+	if err := h.st.SetHome(state.HomeRef{ID: id, Type: typ}); err != nil {
 		return errf("save failed: %v", err)
 	}
 	return Response{Content: fmt.Sprintf("🏠 Home set to %s `%s`.", typ, id), Ephemeral: true}
@@ -135,7 +137,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in Interaction) Response {
 			worktree = path
 		}
 	}
-	var sess Session
+	var sess state.Session
 	switch home.Type {
 	case "category":
 		ch, err := h.d.CreateChannelUnder(ctx, home.ID, name)
@@ -143,14 +145,14 @@ func (h *Handler) sessionCreate(ctx context.Context, in Interaction) Response {
 			_ = h.wt.Remove(name, true) // roll back the worktree we just made
 			return errf("create channel: %v", err)
 		}
-		sess = Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, name, "Session **"+name+"** started.")
 		if err != nil {
 			_ = h.wt.Remove(name, true)
 			return errf("create forum post: %v", err)
 		}
-		sess = Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree}
 	default:
 		return errf("home type %q unsupported", home.Type)
 	}

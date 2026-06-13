@@ -10,6 +10,7 @@ import (
 
 	"github.com/vskstudio/dctl"
 	healthpkg "github.com/vskstudio/dctl/internal/health"
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 const healthWindow = 90 * time.Second
@@ -50,7 +51,7 @@ func pingLoop(ctx context.Context, c *dctl.Client, h *healthpkg.Health) {
 }
 
 // statusLoop maintains a single self-updating status embed in channelID.
-func statusLoop(ctx context.Context, c *dctl.Client, st *dctl.State, h *healthpkg.Health, channelID string) {
+func statusLoop(ctx context.Context, c *dctl.Client, st *state.State, h *healthpkg.Health, channelID string) {
 	t := time.NewTicker(60 * time.Second)
 	defer t.Stop()
 	render := func() {

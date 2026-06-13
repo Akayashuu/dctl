@@ -10,6 +10,7 @@ import (
 
 	"github.com/vskstudio/dctl"
 	healthpkg "github.com/vskstudio/dctl/internal/health"
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 func defaultStatePath() string {
@@ -35,7 +36,7 @@ func runServe(ctx context.Context, c *dctl.Client, args []string) error {
 
 	health := healthpkg.NewHealth(time.Now())
 
-	st, err := dctl.LoadState(*statePath)
+	st, err := state.LoadState(*statePath)
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}

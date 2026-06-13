@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 type fakeDiscord struct {
@@ -30,8 +32,8 @@ func (f *fakeDiscord) ArchiveChannel(ctx context.Context, id string) error {
 
 type fakeSup struct{ started, stopped []string }
 
-func (f *fakeSup) Start(s Session) error  { f.started = append(f.started, s.Name); return nil }
-func (f *fakeSup) Stop(name string) error { f.stopped = append(f.stopped, name); return nil }
+func (f *fakeSup) Start(s state.Session) error { f.started = append(f.started, s.Name); return nil }
+func (f *fakeSup) Stop(name string) error      { f.stopped = append(f.stopped, name); return nil }
 
 type fakeWT struct {
 	created, removed []string
@@ -51,12 +53,12 @@ func (f *fakeWT) Remove(name string, force bool) error {
 	return nil
 }
 
-func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *fakeWT, *State) {
+func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *fakeWT, *state.State) {
 	t.Helper()
 	d := &fakeDiscord{homeType: homeType}
 	sup := &fakeSup{}
 	wt := &fakeWT{path: "/wt/x"}
-	st := NewState(t.TempDir() + "/s.json")
+	st := state.NewState(t.TempDir() + "/s.json")
 	st.AddAllow("owner")
 	return NewHandler(d, sup, wt, st, "claude"), d, sup, wt, st
 }
@@ -102,7 +104,7 @@ func TestSetHomeDetectsForum(t *testing.T) {
 
 func TestSessionCreateText(t *testing.T) {
 	h, d, sup, wt, st := newTestHandler(t, ChannelText)
-	st.SetHome(HomeRef{ID: "cat1", Type: "category"})
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	h.Handle(context.Background(), it("owner", "session", "create",
 		InteractionOption{Name: "name", Value: "demo"}))
 	if len(d.created) != 1 || d.created[0] != "demo" {
@@ -122,7 +124,7 @@ func TestSessionCreateText(t *testing.T) {
 
 func TestSessionCreateShared(t *testing.T) {
 	h, _, _, wt, st := newTestHandler(t, ChannelText)
-	st.SetHome(HomeRef{ID: "cat1", Type: "category"})
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 	h.Handle(context.Background(), it("owner", "session", "create",
 		InteractionOption{Name: "name", Value: "demo"},
 		InteractionOption{Name: "shared", Value: true}))
@@ -146,7 +148,7 @@ func TestSessionCreateRequiresHome(t *testing.T) {
 
 func TestSessionCreateForum(t *testing.T) {
 	h, d, sup, _, st := newTestHandler(t, ChannelForum)
-	st.SetHome(HomeRef{ID: "forum1", Type: "forum"})
+	st.SetHome(state.HomeRef{ID: "forum1", Type: "forum"})
 	h.Handle(context.Background(), it("owner", "session", "create",
 		InteractionOption{Name: "name", Value: "topic"}))
 	if len(d.created) != 1 || d.created[0] != "forum:topic" {
@@ -159,8 +161,8 @@ func TestSessionCreateForum(t *testing.T) {
 
 func TestSessionCloseStopsAndArchives(t *testing.T) {
 	h, d, sup, wt, st := newTestHandler(t, ChannelText)
-	st.SetHome(HomeRef{ID: "cat1", Type: "category"})
-	st.AddSession(Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
 	h.Handle(context.Background(), it("owner", "session", "close",
 		InteractionOption{Name: "name", Value: "demo"}))
 	if len(sup.stopped) != 1 || len(d.archived) != 1 || len(wt.removed) != 1 {
@@ -174,7 +176,7 @@ func TestSessionCloseStopsAndArchives(t *testing.T) {
 func TestSessionCloseDirtyRefusedWithoutForce(t *testing.T) {
 	h, d, _, wt, st := newTestHandler(t, ChannelText)
 	wt.removeErr = errors.New(`worktree "demo" has uncommitted changes`)
-	st.AddSession(Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
+	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
 	r := h.Handle(context.Background(), it("owner", "session", "close",
 		InteractionOption{Name: "name", Value: "demo"}))
 	if !r.Ephemeral {
@@ -191,7 +193,7 @@ func TestSessionCloseDirtyRefusedWithoutForce(t *testing.T) {
 func TestSessionCloseDirtyForced(t *testing.T) {
 	h, _, _, wt, st := newTestHandler(t, ChannelText)
 	wt.removeErr = errors.New("dirty")
-	st.AddSession(Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
+	st.AddSession(state.Session{Name: "demo", ChannelID: "ch9", Type: "text", Worktree: "/wt/x"})
 	h.Handle(context.Background(), it("owner", "session", "close",
 		InteractionOption{Name: "name", Value: "demo"},
 		InteractionOption{Name: "force", Value: true}))
