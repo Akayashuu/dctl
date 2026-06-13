@@ -38,6 +38,38 @@ with Manage Channels (perms `68624`) to use channel create/delete/forum.
 `-c`/`--channel` overrides the default channel. `--guild` defaults to the bot's
 sole server.
 
+## Daemon (`dctl serve`) — always-on bot + slash commands
+
+`dctl serve` is a long-running daemon that holds a **Gateway (websocket)**
+connection, so the bot shows as **online 24/7** and exposes native **slash
+commands**. It supervises one bridged process (Claude by default) per "session".
+
+```bash
+DCTL_OWNER_ID=<your_user_id> dctl serve [--health-addr :8787] [--status-channel <id>]
+```
+
+- **State** lives in `$DCTL_STATE_DIR/state.json` (default `~/.config/dctl/state.json`):
+  home, allowlist, sessions, repo. Sessions are respawned on restart.
+- **Allowlist**: every slash command is gated by a list of Discord user IDs. Seed
+  the owner with `DCTL_OWNER_ID`; manage at runtime with `/allow`.
+
+| Slash command | Effect |
+|---|---|
+| `/set home <channel>` | Set the **category** or **forum** that holds sessions (type auto-detected). |
+| `/session create <name> [cmd] [shared]` | Create a channel (category) or forum post, start a bridge on it. Runs in its **own git worktree** by default (`shared:true` → main checkout). |
+| `/session close <name> [force]` | Stop the bridge, remove the worktree (refuses if dirty unless `force:true` — branch `session/<name>` is kept), archive the channel/post. |
+| `/session list` | List active sessions. |
+| `/allow add\|remove\|list [user]` | Manage the allowlist. |
+
+- **Worktree isolation**: each session gets `<repo>/.dctl-sessions/<name>` on branch
+  `session/<name>` (git-ignored). Falls back to shared if not a git repo.
+- **Liveness** (depends only on the bot/daemon, never on a Claude session):
+  - `--health-addr :8787` → `GET /health` returns `200`+JSON when online, `503` when
+    the gateway is down (for UptimeKuma/curl).
+  - `--status-channel <id>` → a self-updating embed: `🟢 dctl online · uptime … · ping …ms · N sessions`.
+- Needs **Manage Channels** (creates/archives channels) and the bot must have the
+  `applications.commands` scope for slash commands to register.
+
 ## Rules
 
 - **Read before you reply.** `dctl read` to get the `message_id` and context, then
