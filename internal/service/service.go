@@ -12,7 +12,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/user"
@@ -132,13 +134,16 @@ func BuildUninstall(c Config) (Plan, error) {
 
 // StatusCommand returns the command that reports whether the service is active.
 func StatusCommand(c Config) (Command, error) {
+	// IgnoreErr: these report status by exit code (e.g. systemctl exits 3 when
+	// the unit is inactive); we still want to print the output without turning
+	// "stopped" into a CLI error.
 	switch goos(c) {
 	case "linux":
-		return Command{Argv: []string{"systemctl", "--user", "status", linuxUnitName}}, nil
+		return Command{Argv: []string{"systemctl", "--user", "status", linuxUnitName}, IgnoreErr: true}, nil
 	case "darwin":
-		return Command{Argv: []string{"launchctl", "list", macLabel}}, nil
+		return Command{Argv: []string{"launchctl", "list", macLabel}, IgnoreErr: true}, nil
 	case "windows":
-		return Command{Argv: []string{"schtasks", "/query", "/tn", winTaskName, "/v"}}, nil
+		return Command{Argv: []string{"schtasks", "/query", "/tn", winTaskName, "/v"}, IgnoreErr: true}, nil
 	default:
 		return Command{}, fmt.Errorf("unsupported OS %q", goos(c))
 	}
@@ -152,7 +157,7 @@ func linuxPlan(c Config) Plan {
 		"Wants=network-online.target\n\n" +
 		"[Service]\n" +
 		"Type=simple\n" +
-		"EnvironmentFile=" + c.EnvFile + "\n" +
+		"EnvironmentFile=-" + c.EnvFile + "\n" + // leading '-' => optional (no boot failure if absent)
 		"ExecStart=" + quoteArgv(c.BinPath, serveArgs(c)) + "\n" +
 		"Restart=always\n" +
 		"RestartSec=3\n\n" +
@@ -207,7 +212,7 @@ func windowsPlan(c Config) Plan {
 	// scheduled task never carries the token itself.
 	content := "@echo off\r\n" +
 		"if exist \"" + c.EnvFile + "\" (\r\n" +
-		"  for /f \"usebackq tokens=1,* delims==\" %%a in (\"" + c.EnvFile + "\") do set \"%%a=%%b\"\r\n" +
+		"  for /f \"usebackq eol=# tokens=1,* delims==\" %%a in (\"" + c.EnvFile + "\") do set \"%%a=%%b\"\r\n" +
 		")\r\n" +
 		"\"" + c.BinPath + "\" " + strings.Join(serveArgs(c), " ") + "\r\n"
 	return Plan{
@@ -312,8 +317,14 @@ func runPlan(ctx context.Context, p Plan) error {
 
 func writeFile(f FileWrite) error {
 	if f.Template {
-		if _, err := os.Stat(f.Path); err == nil {
-			return nil // never overwrite existing secrets
+		// Never overwrite an existing secrets file. Only a definite "not found"
+		// permits writing the template; any other stat error is fatal rather
+		// than risk clobbering a file we simply couldn't read.
+		switch _, err := os.Stat(f.Path); {
+		case err == nil:
+			return nil
+		case !errors.Is(err, fs.ErrNotExist):
+			return fmt.Errorf("stat %s: %w", f.Path, err)
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(f.Path), 0o755); err != nil {

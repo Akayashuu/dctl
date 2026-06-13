@@ -1,9 +1,35 @@
 package service
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWriteFileNeverOverwritesTemplate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "dctl.env")
+	if err := os.WriteFile(path, []byte("DISCORD_BOT_TOKEN=real-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Template write against an existing file must be a no-op (preserve secrets).
+	if err := writeFile(FileWrite{Path: path, Content: envTemplate, Mode: 0o600, Template: true}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if !strings.Contains(string(got), "real-secret") {
+		t.Fatalf("template clobbered existing secrets: %q", got)
+	}
+	// A fresh path is created from the template.
+	fresh := filepath.Join(dir, "sub", "new.env")
+	if err := writeFile(FileWrite{Path: fresh, Content: envTemplate, Mode: 0o600, Template: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("template not written to fresh path: %v", err)
+	}
+}
 
 func testConfig(goos string) Config {
 	return Config{
@@ -41,7 +67,7 @@ func TestLinuxPlan(t *testing.T) {
 		t.Fatalf("unit path = %s", unit.Path)
 	}
 	for _, want := range []string{
-		"EnvironmentFile=/home/me/.config/dctl/dctl.env",
+		"EnvironmentFile=-/home/me/.config/dctl/dctl.env", // '-' => optional, no boot failure if absent
 		"ExecStart=/home/me/.local/bin/dctl serve --health-addr 127.0.0.1:8787",
 		"Restart=always",
 		"WantedBy=default.target",
@@ -104,7 +130,26 @@ func TestWindowsPlan(t *testing.T) {
 	if !strings.Contains(launcher.Content, `"C:\Users\me\dctl.exe" serve`) {
 		t.Errorf("launcher missing dctl invocation:\n%s", launcher.Content)
 	}
+	// The loader must skip the env template's `#` comment lines (cmd's default
+	// eol is `;`, not `#`), or it would run `set` on each comment.
+	if !strings.Contains(launcher.Content, "eol=#") {
+		t.Errorf("launcher should skip # comment lines (eol=#):\n%s", launcher.Content)
+	}
 	assertCmd(t, p, "schtasks /create /tn dctl /tr")
+}
+
+func TestStatusToleratesInactive(t *testing.T) {
+	// `systemctl status` exits non-zero when the unit is stopped; status must
+	// still print rather than surface that as a CLI error.
+	for _, os := range []string{"linux", "darwin", "windows"} {
+		cmd, err := StatusCommand(testConfig(os))
+		if err != nil {
+			t.Fatalf("status %s: %v", os, err)
+		}
+		if !cmd.IgnoreErr {
+			t.Errorf("status command for %s should be IgnoreErr", os)
+		}
+	}
 }
 
 func TestUnsupportedOS(t *testing.T) {
