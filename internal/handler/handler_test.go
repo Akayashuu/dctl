@@ -285,3 +285,44 @@ func TestSessionCreateUsesQualifiedTitle(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionCloseOnlyTouchesOwnSession(t *testing.T) {
+	// Two instances each own a logically-identical "foo" with distinct channel
+	// ids. Closing on instance "bob" must archive only bob's channel.
+	h, d, sup, wt, st := newTestHandler(t, dctl.ChannelText)
+	st.InstanceID = "bob"
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	// bob's own session, keyed by logical name, pointing at bob's channel.
+	st.AddSession(state.Session{Name: "foo", ChannelID: "bob-foo-ch", Type: "text", Worktree: "/wt/bob"})
+
+	h.Handle(context.Background(), it("owner", "session", "close",
+		dctl.InteractionOption{Name: "name", Value: "foo"}))
+
+	if len(d.archived) != 1 || d.archived[0] != "bob-foo-ch" {
+		t.Fatalf("close must archive only bob's channel, got %+v", d.archived)
+	}
+	if len(sup.stopped) != 1 || sup.stopped[0] != "foo" {
+		t.Fatalf("close must stop only the local logical session, got %+v", sup.stopped)
+	}
+	if len(wt.removed) != 1 {
+		t.Fatalf("close must remove exactly bob's worktree, got %+v", wt.removed)
+	}
+	if _, ok := st.FindSession("foo"); ok {
+		t.Fatal("bob's foo should be gone after close")
+	}
+}
+
+func TestSessionCloseUnknownNameIsNoop(t *testing.T) {
+	// Closing a name absent from this instance's state touches nothing — it
+	// cannot reach another instance's resources.
+	h, d, sup, _, st := newTestHandler(t, dctl.ChannelText)
+	st.InstanceID = "bob"
+	r := h.Handle(context.Background(), it("owner", "session", "close",
+		dctl.InteractionOption{Name: "name", Value: "alice-only"}))
+	if !r.Ephemeral {
+		t.Fatal("expected ephemeral error for unknown session")
+	}
+	if len(d.archived) != 0 || len(sup.stopped) != 0 {
+		t.Fatalf("unknown close must be a no-op, got archived=%+v stopped=%+v", d.archived, sup.stopped)
+	}
+}
