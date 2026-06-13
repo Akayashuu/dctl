@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/vskstudio/dctl"
@@ -440,5 +442,88 @@ func TestSessionCloseUsesProjectRepo(t *testing.T) {
 		dctl.InteractionOption{Name: "name", Value: "demo"}))
 	if len(wt.removed) != 1 {
 		t.Fatalf("expected worktree removed: %+v", wt.removed)
+	}
+}
+
+func TestSessionCreateClonesThenUsesProject(t *testing.T) {
+	h, _, _, wt, fg, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	_ = st.SetWorkspace("/ws")
+	fg.cloneDir = "/ws/app"
+	h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"},
+		dctl.InteractionOption{Name: "clone", Value: "me/app"}))
+	if len(fg.cloned) != 1 || fg.cloned[0] != "me/app" {
+		t.Fatalf("expected clone of me/app, got %+v", fg.cloned)
+	}
+	if len(wt.createdRepos) != 1 || wt.createdRepos[0] != "/ws/app" {
+		t.Fatalf("expected Create on /ws/app, got %+v", wt.createdRepos)
+	}
+	sess, _ := st.FindSession("demo")
+	if sess.Project != "app" {
+		t.Fatalf("project should be derived from clone: %+v", sess)
+	}
+}
+
+func TestSessionCreateCloneErrorSurfaces(t *testing.T) {
+	h, d, _, wt, fg, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	_ = st.SetWorkspace("/ws")
+	fg.cloneErr = errors.New("auth required")
+	r := h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"},
+		dctl.InteractionOption{Name: "clone", Value: "me/app"}))
+	if !r.Ephemeral || r.Content == "" {
+		t.Fatalf("expected ephemeral clone error, got %+v", r)
+	}
+	if len(wt.created) != 0 || len(d.created) != 0 {
+		t.Fatalf("nothing should be created after clone failure")
+	}
+}
+
+func TestWorkspaceListShowsGitProjects(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	ws := t.TempDir()
+	// proj1 is a git repo; plain is a normal dir; file is not a dir.
+	if err := os.MkdirAll(ws+"/proj1/.git", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ws+"/plain", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetWorkspace(ws)
+	r := h.Handle(context.Background(), it("owner", "workspace", "list"))
+	if !strings.Contains(r.Content, "proj1") {
+		t.Fatalf("expected proj1 listed, got %q", r.Content)
+	}
+	if strings.Contains(r.Content, "plain") {
+		t.Fatalf("non-git dir should not be listed, got %q", r.Content)
+	}
+}
+
+func TestWorkspaceListErrorsWithoutWorkspace(t *testing.T) {
+	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
+	r := h.Handle(context.Background(), it("owner", "workspace", "list"))
+	if !r.Ephemeral || r.Content == "" {
+		t.Fatalf("expected error when no workspace set, got %+v", r)
+	}
+}
+
+func TestWorkspaceRemotesLists(t *testing.T) {
+	h, _, _, _, fg, _ := newTestHandler(t, dctl.ChannelText)
+	fg.gh = true
+	fg.repos = []forge.Repo{{FullName: "me/app", Forge: "github"}}
+	r := h.Handle(context.Background(), it("owner", "workspace", "remotes"))
+	if !strings.Contains(r.Content, "me/app") || !strings.Contains(r.Content, "github") {
+		t.Fatalf("expected labeled remote, got %q", r.Content)
+	}
+}
+
+func TestWorkspaceRemotesNoForge(t *testing.T) {
+	h, _, _, _, fg, _ := newTestHandler(t, dctl.ChannelText)
+	fg.gh, fg.gl = false, false
+	r := h.Handle(context.Background(), it("owner", "workspace", "remotes"))
+	if !strings.Contains(r.Content, "gh/glab") {
+		t.Fatalf("expected no-forge message, got %q", r.Content)
 	}
 }

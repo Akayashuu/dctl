@@ -83,6 +83,8 @@ func (h *Handler) Handle(ctx context.Context, in dctl.Interaction) dctl.Response
 		return h.handleSet(ctx, in)
 	case "session":
 		return h.handleSession(ctx, in)
+	case "workspace":
+		return h.handleWorkspace(ctx, in)
 	case "allow":
 		return h.handleAllow(ctx, in)
 	default:
@@ -186,7 +188,15 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	ws := h.st.WorkspaceRoot()
 	project := ""
 	if ws != "" {
-		project, _ = in.Data.Opt("project")
+		if spec, ok := in.Data.Opt("clone"); ok && spec != "" {
+			dir, err := h.fg.Clone(ctx, spec, ws)
+			if err != nil {
+				return errf("clone: %v", err)
+			}
+			project = filepath.Base(dir)
+		} else {
+			project, _ = in.Data.Opt("project")
+		}
 		if project == "" {
 			return errf("specify project: (see `/workspace list`) or clone:")
 		}
@@ -280,6 +290,64 @@ func (h *Handler) sessionList() dctl.Response {
 	out := "Active sessions:\n"
 	for _, s := range sessions {
 		out += fmt.Sprintf("• **%s** (%s) <#%s>\n", s.Name, s.Type, s.ChannelID)
+	}
+	return dctl.Response{Content: out, Ephemeral: true}
+}
+
+func (h *Handler) handleWorkspace(ctx context.Context, in dctl.Interaction) dctl.Response {
+	sub, _ := in.Data.Subcommand()
+	switch sub {
+	case "list":
+		return h.workspaceList()
+	case "remotes":
+		return h.workspaceRemotes(ctx)
+	default:
+		return errf("unknown /workspace subcommand")
+	}
+}
+
+func (h *Handler) workspaceList() dctl.Response {
+	ws := h.st.WorkspaceRoot()
+	if ws == "" {
+		return errf("no workspace set — run /set workspace first")
+	}
+	entries, err := os.ReadDir(ws)
+	if err != nil {
+		return errf("read workspace: %v", err)
+	}
+	out := "Projects:\n"
+	n := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(ws, e.Name(), ".git")); err != nil {
+			continue
+		}
+		out += "• " + e.Name() + "\n"
+		n++
+	}
+	if n == 0 {
+		out = "No git projects in workspace."
+	}
+	return dctl.Response{Content: out, Ephemeral: true}
+}
+
+func (h *Handler) workspaceRemotes(ctx context.Context) dctl.Response {
+	gh, gl := h.fg.Available()
+	if !gh && !gl {
+		return errf("no gh/glab found — install one and authenticate")
+	}
+	repos, err := h.fg.List(ctx)
+	if err != nil {
+		return errf("list remotes: %v", err)
+	}
+	if len(repos) == 0 {
+		return dctl.Response{Content: "No remote repos found.", Ephemeral: true}
+	}
+	out := "Remotes:\n"
+	for _, r := range repos {
+		out += fmt.Sprintf("• [%s] %s\n", r.Forge, r.FullName)
 	}
 	return dctl.Response{Content: out, Ephemeral: true}
 }
