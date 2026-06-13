@@ -232,6 +232,86 @@ func TestSessionCreateForum(t *testing.T) {
 	}
 }
 
+func TestSessionBanner(t *testing.T) {
+	const repo = "/home/me/proj"
+	cases := []struct {
+		name     string
+		worktree string
+		branch   string
+		shared   bool
+		want     []string
+		absent   []string
+	}{
+		{
+			name:     "isolated",
+			worktree: "/home/me/proj/.dctl-sessions/demo",
+			branch:   "session/demo",
+			shared:   false,
+			want: []string{
+				"🚀 Session **demo** ready.",
+				"Project: **proj** (`/home/me/proj`)",
+				"Mode: isolated worktree",
+				"Worktree: `/home/me/proj/.dctl-sessions/demo`",
+				"Branch: `session/demo`",
+				"Command: `claude`",
+			},
+			absent: []string{"main checkout", "not a git repo"},
+		},
+		{
+			name:     "shared main checkout",
+			worktree: "",
+			branch:   "session/demo",
+			shared:   true,
+			want: []string{
+				"🚀 Session **demo** ready.",
+				"Project: **proj** (`/home/me/proj`)",
+				"Mode: shared (main checkout)",
+				"Branch: — (runs on current branch)",
+				"Command: `claude`",
+			},
+			absent: []string{"Worktree:", "isolated worktree", "not a git repo"},
+		},
+		{
+			name:     "non-git shared",
+			worktree: "",
+			branch:   "session/demo",
+			shared:   false,
+			want: []string{
+				"🚀 Session **demo** ready.",
+				"Project: **proj** (`/home/me/proj`)",
+				"Mode: shared (not a git repo)",
+				"Command: `claude`",
+			},
+			absent: []string{"Worktree:", "Branch:", "isolated worktree", "main checkout"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sessionBanner(repo, "demo", tc.worktree, tc.branch, "claude", tc.shared)
+			for _, s := range tc.want {
+				if !strings.Contains(got, s) {
+					t.Errorf("banner missing %q\n--- got ---\n%s", s, got)
+				}
+			}
+			for _, s := range tc.absent {
+				if strings.Contains(got, s) {
+					t.Errorf("banner unexpectedly contains %q\n--- got ---\n%s", s, got)
+				}
+			}
+		})
+	}
+}
+
+func TestSessionBannerEmptyRepo(t *testing.T) {
+	got := sessionBanner("", "demo", "", "session/demo", "claude", true)
+	if !strings.Contains(got, "Project: **(cwd)**") {
+		t.Errorf("empty repo should render (cwd), got:\n%s", got)
+	}
+	if strings.Contains(got, "**.**") || strings.Contains(got, "(``)") {
+		t.Errorf("empty repo must not render misleading path, got:\n%s", got)
+	}
+}
+
 func TestSessionCloseStopsAndArchives(t *testing.T) {
 	h, d, sup, wt, _, st := newTestHandler(t, dctl.ChannelText)
 	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})

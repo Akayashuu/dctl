@@ -52,6 +52,7 @@ type supervisor interface {
 // repo root is passed per call so one Worktreer serves every project.
 type worktrees interface {
 	Create(repo, name string) (path string, err error)
+	Branch(name string) string
 	Remove(repo, name string, force bool) error
 }
 
@@ -81,6 +82,32 @@ func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, st *state.St
 func deny() dctl.Response { return dctl.Response{Content: "⛔ Not authorized.", Ephemeral: true} }
 func errf(f string, a ...any) dctl.Response {
 	return dctl.Response{Content: "⚠️ " + fmt.Sprintf(f, a...), Ephemeral: true}
+}
+
+// sessionBanner renders the shared context body posted on /session create.
+// worktree=="" means no isolated worktree was made; shared distinguishes an
+// explicit shared:true run (main checkout) from a non-git fallback. branch is
+// the real (possibly instanceID-namespaced) branch produced by the worktreer.
+func sessionBanner(repo, name, worktree, branch, cmd string, shared bool) string {
+	b := fmt.Sprintf("🚀 Session **%s** ready.\n", name)
+	if repo == "" {
+		b += "• Project: **(cwd)**\n"
+	} else {
+		b += fmt.Sprintf("• Project: **%s** (`%s`)\n", filepath.Base(repo), repo)
+	}
+	switch {
+	case worktree != "":
+		b += "• Mode: isolated worktree\n"
+		b += fmt.Sprintf("• Worktree: `%s`\n", worktree)
+		b += fmt.Sprintf("• Branch: `%s`\n", branch)
+	case shared:
+		b += "• Mode: shared (main checkout)\n"
+		b += "• Branch: — (runs on current branch)\n"
+	default:
+		b += "• Mode: shared (not a git repo)\n"
+	}
+	b += fmt.Sprintf("• Command: `%s`", cmd)
+	return b
 }
 
 // Handle processes one interaction and returns the reply.
