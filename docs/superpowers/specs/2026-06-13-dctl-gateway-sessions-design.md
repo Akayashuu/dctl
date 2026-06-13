@@ -18,6 +18,10 @@ Three user-facing capabilities:
 3. **`/set home`** — designate the category (or forum) that holds all session
    channels. The home type is auto-detected (category → text channels, forum →
    forum posts).
+4. **Liveness dashboard** — at-a-glance "is the bot up?" that depends **only on the
+   bot + daemon, never on any Claude/AI session**. Surfaced two ways: an HTTP
+   `/health` endpoint (for uptime monitors) and a self-updating Discord status
+   message.
 
 ## Architecture
 
@@ -67,6 +71,49 @@ Seeded with `343535234303787009` (akayashuu) by default.
 Load on startup, save on every mutation. The store is a small, independently
 testable unit.
 
+### Health & status (bot/daemon liveness)
+
+The daemon keeps one in-memory `Health` snapshot, refreshed by the parts that
+already run — **no dependency on any bridged Claude process**:
+
+```go
+type Health struct {
+    Online        bool      // gateway connected AND heartbeat ACK'd within the window
+    StartedAt     time.Time // → uptime
+    LastHeartbeat time.Time // last gateway heartbeat ACK
+    LastPing      time.Time // last successful REST self-ping (GET /users/@me)
+    PingLatencyMS int64     // round-trip of that self-ping
+    Sessions      int       // active supervised bridges
+}
+```
+
+- **Signal source:** `Online` is driven by the Gateway heartbeat ACK loop (already
+  required for presence). A lightweight ticker also does a REST `GET /users/@me`
+  every ~30 s to record an independent reachability latency. Both are pure
+  bot/transport facts — a hung or crashed Claude session never flips it.
+
+**Surface 1 — HTTP `/health`** (`--health-addr`, e.g. `:8787`; disabled if unset):
+
+```
+GET /health  → 200 {"online":true,"uptime_s":12345,"ping_ms":48,"sessions":2,
+                    "last_heartbeat":"...","last_ping":"..."}
+             → 503 (same body, online:false) when the gateway is down
+```
+
+200/503 status lets UptimeKuma / curl alert without parsing. JSON for a dashboard.
+
+**Surface 2 — Discord status message** (`--status-channel <id>`, optional): the
+daemon maintains a single embed (find-or-create + edit-in-place, id cached in
+`state.json`) refreshed on heartbeat and on each session change:
+
+```
+🟢 dctl online  ·  uptime 3h41m  ·  ping 48ms  ·  2 sessions   (updated 21:32)
+```
+
+Flips to `🔴 dctl offline` only via the systemd unit's restart gap (the daemon
+can't post when it's the thing that's down) — so the embed showing a stale
+timestamp + the 503 from `/health` are the two complementary "it's down" signals.
+
 ## Data flow
 
 ```
@@ -97,17 +144,25 @@ Discord  ──INTERACTION_CREATE──▶  Gateway client  ──▶  handler
   including allowlist gating.
 - Websocket transport itself is kept minimal and exercised manually / via a fake
   connection; logic lives in testable handlers, not the socket loop.
+- **Health**: the `/health` handler is a pure function of a `Health` value — table
+  test the 200-vs-503 split and the JSON body; the embed renderer (Health → string)
+  is unit-tested without touching Discord.
 
 ## Implementation phases
 
 1. **Gateway daemon foundation** — `dctl serve`, Gateway connect + online presence,
    slash-command registration, interaction plumbing, allowlist, `/set home`.
+   Includes the `Health` snapshot + `/health` HTTP endpoint (the heartbeat loop is
+   already here, so liveness is essentially free at this stage).
 2. **Sessions** — `/session create|close|list` + the supervisor (spawn/restart
-   child bridges) + session persistence.
-3. **Forum variant** — sessions as forum posts when `home` is a forum.
+   child bridges) + session persistence. Wire `Sessions` count into `Health`.
+3. **Status embed** — the self-updating Discord status message (`--status-channel`).
+4. **Forum variant** — sessions as forum posts when `home` is a forum.
 
 ## Out of scope (YAGNI)
 
 - Multi-guild home configuration (mono-server assumption holds).
-- Web dashboard / metrics.
+- Rich web dashboard, historical metrics / time-series, alerting rules. (The
+  `/health` endpoint + status embed cover live liveness; graphing is a monitor's
+  job, e.g. point UptimeKuma at `/health`.)
 - Per-session model or richer Claude config beyond an optional `cmd`.
