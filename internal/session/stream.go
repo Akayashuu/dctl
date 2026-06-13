@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"bufio"
@@ -11,9 +11,9 @@ import (
 	"sync"
 )
 
-// newResponder selects the response strategy. stream=true (default) keeps a
+// NewResponder selects the response strategy. stream=true (default) keeps a
 // persistent claude stream-json process; stream=false runs oneShot per message.
-func newResponder(ctx context.Context, stream bool, cmdStr, model string, oneShot func(context.Context, dctlMessage) (string, error)) responder {
+func NewResponder(ctx context.Context, stream bool, cmdStr, model string, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
 	if !stream {
 		return &oneShotResponder{run: oneShot}
 	}
@@ -188,16 +188,16 @@ func (s *streamSession) Send(text string) (turnResult, error) {
 	return tr, nil
 }
 
-// responder turns one Discord message into a reply string. Two implementations:
+// Responder turns one Discord message into a reply string. Two implementations:
 // a persistent stream-json claude session, or a per-message one-shot command.
-type responder interface {
-	Respond(ctx context.Context, m dctlMessage) (string, error)
+type Responder interface {
+	Respond(ctx context.Context, m DctlMessage) (string, error)
 	Close() error
 }
 
-// dctlMessage is the minimal message shape the responders need (decoupled from
+// DctlMessage is the minimal message shape the responders need (decoupled from
 // the discord package so stream.go stays import-light; runBridge adapts).
-type dctlMessage struct {
+type DctlMessage struct {
 	Content   string
 	Author    string
 	MessageID string
@@ -207,10 +207,10 @@ type dctlMessage struct {
 // oneShotResponder runs cmdStr fresh for every message (legacy behavior, used
 // for arbitrary non-claude commands when --stream=false).
 type oneShotResponder struct {
-	run func(ctx context.Context, m dctlMessage) (string, error)
+	run func(ctx context.Context, m DctlMessage) (string, error)
 }
 
-func (o *oneShotResponder) Respond(ctx context.Context, m dctlMessage) (string, error) {
+func (o *oneShotResponder) Respond(ctx context.Context, m DctlMessage) (string, error) {
 	return o.run(ctx, m)
 }
 func (o *oneShotResponder) Close() error { return nil }
@@ -226,7 +226,7 @@ type streamResponder struct {
 	sess  *streamSession
 }
 
-func (r *streamResponder) Respond(ctx context.Context, m dctlMessage) (string, error) {
+func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.sess == nil {

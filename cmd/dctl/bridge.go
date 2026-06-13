@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/session"
 )
 
 // discordMaxLen is Discord's hard per-message character limit.
@@ -86,10 +87,10 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	}
 	logf(*verbose, "bridge up: cmd=%q stream=%v model=%q interval=%ds last=%s", *cmdStr, *stream, *model, *interval, last)
 
-	oneShot := func(ctx context.Context, mm dctlMessage) (string, error) {
+	oneShot := func(ctx context.Context, mm session.DctlMessage) (string, error) {
 		return runCmd(ctx, *cmdStr, mm)
 	}
-	resp := newResponder(ctx, *stream, *cmdStr, *model, oneShot)
+	resp := session.NewResponder(ctx, *stream, *cmdStr, *model, oneShot)
 	defer resp.Close()
 
 	for {
@@ -110,7 +111,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 			// up while the (slow) command runs. Best-effort: ignore if the bot
 			// lacks Add Reactions.
 			_ = c.React(ctx, *ch, m.ID, ackEmoji)
-			out, err := resp.Respond(ctx, dctlMessage{
+			out, err := resp.Respond(ctx, session.DctlMessage{
 				Content:   m.Content,
 				Author:    m.Author.Username,
 				MessageID: m.ID,
@@ -140,7 +141,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 
 // runCmd executes cmdStr (split on whitespace) with the message text appended
 // as the final argument, piped on stdin, and exposed via DCTL_* env vars.
-func runCmd(ctx context.Context, cmdStr string, m dctlMessage) (string, error) {
+func runCmd(ctx context.Context, cmdStr string, m session.DctlMessage) (string, error) {
 	fields := strings.Fields(cmdStr)
 	args := append(fields[1:], m.Content)
 	cmd := exec.CommandContext(ctx, fields[0], args...)
