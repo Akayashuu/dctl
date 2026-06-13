@@ -28,6 +28,8 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	interval := fs.Int("i", 5, "poll interval in seconds")
 	state := fs.String("state", "", "file to persist the last-seen message id across restarts")
 	participants := fs.String("participants", "", "append-only journal of message authors for /session who")
+	allowState := fs.String("allow-state", "", "daemon state.json read per-message to enforce the session allowlist (empty = no enforcement)")
+	allowSession := fs.String("allow-session", "", "session name used with --allow-state to resolve the per-session allowlist")
 	after := fs.String("after", "", "seed start id for the first run (state file wins once it exists)")
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	fs.Parse(args)
@@ -41,6 +43,8 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		Interval:     *interval,
 		State:        *state,
 		Participants: *participants,
+		AllowState:   *allowState,
+		Session:      *allowSession,
 		After:        *after,
 		Verbose:      *verbose,
 	})

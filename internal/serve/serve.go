@@ -93,6 +93,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	partDir := filepath.Dir(o.StatePath) // participants/<name>.log lives beside state.json
 	sup := supervisor.NewSupervisor(ctx, self)
 	sup.PartDir = partDir
+	sup.StatePath = o.StatePath // enables per-session allowlist enforcement in bridge children
 	// Restart persisted sessions.
 	for _, sess := range st.SnapshotSessions() {
 		_ = sup.Start(sess)
