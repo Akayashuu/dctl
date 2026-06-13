@@ -21,6 +21,7 @@ type Session struct {
 	Type      string `json:"type"` // "text" | "forum"
 	Cmd       string `json:"cmd"`
 	Worktree  string `json:"worktree,omitempty"` // abs path; empty for a shared session
+	Project   string `json:"project,omitempty"`  // workspace sub-dir the session started from
 }
 
 // State is the daemon's persisted configuration. All access is mutex-guarded.
@@ -29,7 +30,8 @@ type State struct {
 	path            string     `json:"-"`
 	Home            HomeRef    `json:"home"`
 	Allow           []string   `json:"allow"`
-	Repo            string     `json:"repo,omitempty"` // project sessions operate on; defaults to daemon cwd
+	Repo            string     `json:"repo,omitempty"`      // legacy single-repo root; defaults to daemon cwd
+	Workspace       string     `json:"workspace,omitempty"` // abs path to the workspace root; preferred over Repo
 	Sessions        []Session  `json:"sessions"`
 	StatusMessageID string     `json:"statusMessageID,omitempty"` // cached id of the status embed
 	InstanceID      string     `json:"instanceID,omitempty"`      // per-daemon namespace for global resources; "" = legacy
@@ -160,6 +162,24 @@ func (s *State) SetHome(h HomeRef) error {
 	defer s.mu.Unlock()
 	s.Home = h
 	return s.saveLocked()
+}
+
+// SetWorkspace records the workspace root and persists.
+func (s *State) SetWorkspace(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Workspace = path
+	return s.saveLocked()
+}
+
+// WorkspaceRoot returns the configured workspace, else the legacy Repo, else "".
+func (s *State) WorkspaceRoot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Workspace != "" {
+		return s.Workspace
+	}
+	return s.Repo
 }
 
 // SetStatusMessageID caches the status embed's message id and persists.

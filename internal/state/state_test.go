@@ -110,3 +110,46 @@ func TestSetInstanceIDPersists(t *testing.T) {
 		t.Fatalf("InstanceID not persisted: %q", got.InstanceID)
 	}
 }
+
+func TestSetWorkspacePersists(t *testing.T) {
+	p := t.TempDir() + "/s.json"
+	s := NewState(p)
+	if err := s.SetWorkspace("/home/u/dev"); err != nil {
+		t.Fatalf("SetWorkspace: %v", err)
+	}
+	reloaded, err := LoadState(p)
+	if err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	if reloaded.Workspace != "/home/u/dev" {
+		t.Fatalf("workspace not persisted: %q", reloaded.Workspace)
+	}
+}
+
+func TestWorkspaceRootFallsBack(t *testing.T) {
+	s := NewState(t.TempDir() + "/s.json")
+	if got := s.WorkspaceRoot(); got != "" {
+		t.Fatalf("empty state should give empty root, got %q", got)
+	}
+	s.Repo = "/legacy/repo"
+	if got := s.WorkspaceRoot(); got != "/legacy/repo" {
+		t.Fatalf("should fall back to Repo, got %q", got)
+	}
+	_ = s.SetWorkspace("/ws")
+	if got := s.WorkspaceRoot(); got != "/ws" {
+		t.Fatalf("Workspace should win, got %q", got)
+	}
+}
+
+func TestSessionProjectRoundTrips(t *testing.T) {
+	p := t.TempDir() + "/s.json"
+	s := NewState(p)
+	if err := s.AddSession(Session{Name: "x", ChannelID: "c", Project: "myproj"}); err != nil {
+		t.Fatalf("AddSession: %v", err)
+	}
+	reloaded, _ := LoadState(p)
+	got, ok := reloaded.FindSession("x")
+	if !ok || got.Project != "myproj" {
+		t.Fatalf("project not persisted: %+v", got)
+	}
+}
