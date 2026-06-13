@@ -94,6 +94,34 @@ Fill it in (`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`) and
 restart the service. Install from an installed binary (`go install …`), not
 `go run`, whose executable path is a temporary file.
 
+## Sessions (Discord slash commands)
+
+When `dctl serve` runs, it manages **sessions** — each one bridges a channel/forum
+post to a Claude process — through slash commands (gated by the global allowlist):
+
+```
+/set workspace path:<dir>          # configurable root (e.g. ~/dev) sessions start from
+/workspace list                    # list projects under the workspace
+/workspace remotes forge:<github|gitlab>   # list clonable repos via gh / glab
+/session create name:<n> [project:<repo>] [clone:<owner/repo>] [shared:<bool>]
+/session close name:<n> [force:<bool>]
+/session list
+/session allow add|remove|list name:<n> [user:<@user>]   # per-session allowlist
+/session who name:<n>              # observed participants in the session
+```
+
+`/session create` reports the worktree, branch, and project it set up. Worktrees,
+branches (`session/<instance>/<name>`), and channel titles are namespaced by an
+**instance id** (`DCTL_INSTANCE_ID`, else derived from `DCTL_OWNER_ID`), so two
+daemons sharing one Discord home never collide.
+
+**Authorization.** Slash commands always require the global allowlist. The
+per-session allowlist (`/session allow`) *widens* who may drive a session's bridge
+by writing in its channel: an author is accepted when **globally allowed OR on the
+session's allowlist**. The bridge enforces this per message (reading the daemon
+state fresh, so changes apply without a restart); unauthorized authors are recorded
+for `/session who` but never trigger a Claude run.
+
 ## Library
 
 ```go
