@@ -107,12 +107,12 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			// up while the (slow) command runs. Best-effort: ignore if the bot
 			// lacks Add Reactions.
 			_ = c.React(ctx, ch, m.ID, ackEmoji)
-			out, err := resp.Respond(ctx, session.DctlMessage{
+			out, err := resp.Respond(ctx, session.DctlMessage{ // onEvent wired in next task
 				Content:   m.Content,
 				Author:    m.Author.Username,
 				MessageID: m.ID,
 				ChannelID: m.ChannelID,
-			})
+			}, nil)
 			if err != nil && out == "" {
 				out = "⚠️ " + err.Error()
 			}
