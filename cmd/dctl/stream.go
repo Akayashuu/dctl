@@ -206,7 +206,9 @@ type dctlMessage struct {
 
 // oneShotResponder runs cmdStr fresh for every message (legacy behavior, used
 // for arbitrary non-claude commands when --stream=false).
-type oneShotResponder struct{ run func(ctx context.Context, m dctlMessage) (string, error) }
+type oneShotResponder struct {
+	run func(ctx context.Context, m dctlMessage) (string, error)
+}
 
 func (o *oneShotResponder) Respond(ctx context.Context, m dctlMessage) (string, error) {
 	return o.run(ctx, m)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/vskstudio/dctl/internal/health"
 )
 
 const gatewayURL = "wss://gateway.discord.gg/?v=10&encoding=json"
@@ -27,12 +28,12 @@ type gwPayload struct {
 type Gateway struct {
 	c            *Client
 	Interactions chan Interaction
-	Health       *Health
+	Health       *health.Health
 }
 
-// NewGateway builds a Gateway for client c. health may be nil.
-func NewGateway(c *Client, health *Health) *Gateway {
-	return &Gateway{c: c, Interactions: make(chan Interaction, 16), Health: health}
+// NewGateway builds a Gateway for client c. h may be nil.
+func NewGateway(c *Client, h *health.Health) *Gateway {
+	return &Gateway{c: c, Interactions: make(chan Interaction, 16), Health: h}
 }
 
 // Run connects and processes events until ctx is cancelled or the connection
