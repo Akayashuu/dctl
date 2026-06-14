@@ -5,8 +5,27 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/vskstudio/dctl/internal/control"
 	"github.com/vskstudio/dctl/internal/state"
 )
+
+func TestBridgeArgsIncludeControlSocketForTmux(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	want := control.SocketPath("demo")
+	// Default backend (empty) is tmux → gets a control socket for choice routing.
+	for _, backend := range []string{"", "tmux"} {
+		args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: backend})
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--control-socket "+want) {
+			t.Fatalf("backend %q: expected --control-socket %s in %v", backend, want, args)
+		}
+	}
+	// The stream backend has no pane to type into → no control socket.
+	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: "stream"})
+	if strings.Contains(strings.Join(args, " "), "--control-socket") {
+		t.Fatalf("stream backend should not get a control socket: %v", args)
+	}
+}
 
 func TestBridgeArgsIncludeParticipants(t *testing.T) {
 	s := NewSupervisor(context.Background(), "/bin/dctl")

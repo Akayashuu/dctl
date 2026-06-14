@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/control"
 	"github.com/vskstudio/dctl/internal/forge"
 	"github.com/vskstudio/dctl/internal/gateway"
 	"github.com/vskstudio/dctl/internal/handler"
@@ -130,6 +131,29 @@ func resolveInstanceID(st *state.State, optID, ownerID string) (string, error) {
 // handleDeferred acks a slow interaction immediately (type 5), runs the handler
 // off the dispatch loop, then edits the deferred reply in. On a defer failure it
 // falls back to a direct reply so the user is never left without a response.
+// handleComponent routes a select-menu click. A dctl choice menu's custom_id
+// encodes the session name; the picked value is forwarded to that session's
+// bridge over its control socket (the bridge types it into the pane), then the
+// click is acknowledged by collapsing the menu so it can't be used twice.
+func handleComponent(ctx context.Context, c *dctl.Client, in dctl.Interaction) {
+	sess, ok := dctl.ParseChoiceCustomID(in.Data.CustomID)
+	if !ok {
+		return // not a dctl choice menu — ignore
+	}
+	var value string
+	if len(in.Data.Values) > 0 {
+		value = in.Data.Values[0]
+	}
+	ack := "✅ Picked option " + value + "."
+	if err := control.Send(control.SocketPath(sess), value); err != nil {
+		fmt.Fprintf(os.Stderr, "choice route to %q: %v\n", sess, err)
+		ack = "⚠️ Could not deliver the choice (session not running?)."
+	}
+	if err := c.AckComponent(ctx, in.ID, in.Token, ack); err != nil {
+		fmt.Fprintf(os.Stderr, "ack component: %v\n", err)
+	}
+}
+
 func handleDeferred(ctx context.Context, c *dctl.Client, hdl *handler.Handler, h *health.Health, st *state.State, appID string, in dctl.Interaction) {
 	if err := c.DeferInteraction(ctx, in.ID, in.Token, true); err != nil {
 		fmt.Fprintf(os.Stderr, "defer: %v\n", err)
@@ -220,6 +244,12 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 		for {
 			select {
 			case in := <-gw.Interactions:
+				if in.Type == dctl.InteractionComponent {
+					// A select-menu click (e.g. a choice prompt). Route it off the
+					// dispatch loop so a slow/unreachable bridge can't stall others.
+					go handleComponent(ctx, c, in)
+					continue
+				}
 				if in.Type == dctl.InteractionAutocomplete {
 					// Off the dispatch loop: Autocomplete shells out to gh/glab
 					// (up to acTimeout), which must not stall other interactions.

@@ -50,26 +50,28 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
 	var initPrompts stringList
 	fs.Var(&initPrompts, "tmux-init", "tmux backend: priming message typed once after the pane settles (repeatable)")
+	controlSocket := fs.String("control-socket", "", "tmux backend: unix socket the daemon forwards select-menu clicks to (set by the daemon)")
 	fs.Parse(args)
 
 	return bridge.Run(ctx, c, bridge.Options{
-		Channel:      *ch,
-		Cmd:          *cmdStr,
-		Stream:       *stream,
-		Model:        *model,
-		Ensure:       *ensure,
-		Interval:     *interval,
-		State:        *state,
-		Participants: *participants,
-		AllowState:   *allowState,
-		Session:      *allowSession,
-		After:        *after,
-		Verbose:      *verbose,
-		Progress:     *progress,
-		ProgressKeep: *progressKeep,
-		Backend:      *backend,
-		TmuxTimeout:  *tmuxTimeout,
-		InitPrompts:  initPrompts,
+		Channel:       *ch,
+		Cmd:           *cmdStr,
+		Stream:        *stream,
+		Model:         *model,
+		Ensure:        *ensure,
+		Interval:      *interval,
+		State:         *state,
+		Participants:  *participants,
+		AllowState:    *allowState,
+		Session:       *allowSession,
+		After:         *after,
+		Verbose:       *verbose,
+		Progress:      *progress,
+		ProgressKeep:  *progressKeep,
+		Backend:       *backend,
+		TmuxTimeout:   *tmuxTimeout,
+		InitPrompts:   initPrompts,
+		ControlSocket: *controlSocket,
 	})
 }
 
@@ -80,3 +82,5 @@ var bridgeOptionsHasParticipants = bridge.Options{}.Participants
 var bridgeOptionsHasBackend = bridge.Options{}.Backend
 
 var bridgeOptionsHasInitPrompts = bridge.Options{}.InitPrompts
+
+var bridgeOptionsHasControlSocket = bridge.Options{}.ControlSocket
