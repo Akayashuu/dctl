@@ -62,10 +62,27 @@ func resolveBackend(backend string, stream bool) string {
 	return "oneshot"
 }
 
+// availableBackend downgrades the tmux backend to stream when the tmux binary is
+// missing, so the default works on hosts without tmux instead of erroring at the
+// first message. look is exec.LookPath (injected for testing). The bool reports
+// whether a downgrade happened, so the caller can log it.
+func availableBackend(backend string, look func(string) (string, error)) (string, bool) {
+	if backend == "tmux" {
+		if _, err := look("tmux"); err != nil {
+			return "stream", true
+		}
+	}
+	return backend, false
+}
+
 // Run links the channel to the command until ctx is cancelled.
 // Body lifted verbatim from the old runBridge minus flag parsing.
 func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	backend := resolveBackend(o.Backend, o.Stream)
+	if downgraded, fell := availableBackend(backend, exec.LookPath); fell {
+		logf(true, "tmux not found on PATH — falling back to the %s backend", downgraded)
+		backend = downgraded
+	}
 	// Only the one-shot backend needs an explicit --cmd (it has no built-in
 	// program). stream/tmux default to launching claude, so they run cmd-less.
 	if backend == "oneshot" && strings.TrimSpace(o.Cmd) == "" {

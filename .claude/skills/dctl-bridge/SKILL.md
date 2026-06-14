@@ -57,7 +57,9 @@ The bridge can talk to Claude three ways:
   channel (`tmux send-keys` in, `capture-pane` out, diffed and chrome-stripped).
   Launched with `--dangerously-skip-permissions`, so there are no permission
   prompts to answer yet (rendering prompts as Discord buttons is a future
-  phase). Requires the `tmux` binary on PATH. You can `tmux attach -t
+  phase). Needs the `tmux` binary on PATH — if it's missing the bridge logs a
+  warning and **falls back to the `stream` backend** automatically (so the
+  default still works); `dctl service install` also flags a missing tmux. You can `tmux attach -t
   dctl-<channel>` (or `dctl-<DCTL_INSTANCE_ID>-<channel>` when that env var is
   set) to land in the same live session the bridge is driving. **Known limit:**
   multi-line messages are flattened to one line before sending (a literal

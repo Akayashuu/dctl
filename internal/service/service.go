@@ -121,7 +121,27 @@ func BuildPlan(c Config) (Plan, error) {
 	if c.ConfigPath != "" {
 		p.Files = append(p.Files, configFileWrite(c))
 	}
+	// The default bridge backend is tmux; warn (don't fail) when the host running
+	// the daemon lacks the binary. Skip for cross-OS installs, where a local probe
+	// says nothing about the target.
+	if c.GOOS == "" || c.GOOS == runtime.GOOS {
+		if note := tmuxPreflightNote(exec.LookPath); note != "" {
+			p.Notes = append(p.Notes, note)
+		}
+	}
 	return p, nil
+}
+
+// tmuxPreflightNote returns an install follow-up when tmux is missing, since the
+// default bridge backend is tmux. Empty when tmux is present. look is
+// exec.LookPath (injected for testing).
+func tmuxPreflightNote(look func(string) (string, error)) string {
+	if _, err := look("tmux"); err == nil {
+		return ""
+	}
+	return "tmux not found on PATH — the default bridge backend is tmux. Install it " +
+		"(e.g. `apt install tmux` / `pacman -S tmux` / `brew install tmux`), or sessions " +
+		"fall back to the stream backend automatically."
 }
 
 // configFileWrite is the declarative config.json scaffold: a commented template
