@@ -212,6 +212,10 @@ func TestSessionCreateText(t *testing.T) {
 	if !ok || sess.Worktree != "/wt/x" {
 		t.Fatalf("session not persisted with worktree: %+v", sess)
 	}
+	// No backend: option given → defaults to the interactive tmux TUI.
+	if sess.Backend != "tmux" {
+		t.Fatalf("expected default backend tmux, got %q", sess.Backend)
+	}
 }
 
 func TestSessionCreateShared(t *testing.T) {
