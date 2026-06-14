@@ -34,6 +34,54 @@ func TestSendLiteralArgsTerminatesOptions(t *testing.T) {
 	}
 }
 
+func TestStripChromeKeepsBlockquoteProse(t *testing.T) {
+	// A bare ">" prompt is chrome; "> quoted" is Claude prose and must survive.
+	in := []string{">", "> a markdown quote", "plain line"}
+	got := strings.Join(stripChrome(in), "\n")
+	want := "> a markdown quote\nplain line"
+	if got != want {
+		t.Fatalf("stripChrome = %q, want %q", got, want)
+	}
+}
+
+func TestAwaitQuiescenceWaitsWhileBusy(t *testing.T) {
+	// Frame is static ("working") but busy=true must forbid settling until the
+	// interrupt hint clears, then it settles on the final text.
+	seq := []string{"working (esc to interrupt)", "working (esc to interrupt)", "working (esc to interrupt)", "done", "done"}
+	i := 0
+	capture := func() (string, error) {
+		s := seq[i]
+		if i < len(seq)-1 {
+			i++
+		}
+		return s, nil
+	}
+	got, err := awaitQuiescence(context.Background(), capture, quiesceCfg{
+		stable: 2, poll: 0, timeout: time.Second, busy: paneBusy,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "done" {
+		t.Fatalf("awaitQuiescence settled on %q, want %q", got, "done")
+	}
+}
+
+func TestAwaitQuiescenceReturnsLastOnTimeout(t *testing.T) {
+	// On timeout the last capture is returned alongside the error so the caller
+	// can salvage a partial turn.
+	capture := func() (string, error) { return changing(), nil }
+	last, err := awaitQuiescence(context.Background(), capture, quiesceCfg{
+		stable: 3, poll: 0, timeout: 1 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if last == "" {
+		t.Fatal("expected the last capture to be returned on timeout, got empty")
+	}
+}
+
 func TestNewLines(t *testing.T) {
 	before := "banner\n> \n"
 	after := "banner\nhello from claude\nmore output\n> \n"

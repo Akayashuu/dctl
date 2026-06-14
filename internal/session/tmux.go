@@ -39,8 +39,14 @@ func chromeLine(line string) bool {
 	if strings.TrimLeft(t, "─│╭╮╰╯┌┐└┘ ") == "" {
 		return true
 	}
-	if strings.HasPrefix(t, "│") || strings.HasPrefix(t, ">") {
+	if strings.HasPrefix(t, "│") {
 		return true // input box content line
+	}
+	// A bare ">" (optionally with a cursor/placeholder) is the empty input
+	// prompt. Don't strip "> text": Claude prose can be a markdown blockquote,
+	// and the echoed user input is already removed by the newLines prefix diff.
+	if t == ">" || strings.TrimSpace(strings.TrimPrefix(t, ">")) == "" {
+		return true
 	}
 	// Status / hint / spinner lines.
 	for _, p := range []string{"⏵⏵", "? for shortcuts", "(esc to interrupt)", "esc to interrupt"} {
@@ -81,11 +87,22 @@ func stripChrome(lines []string) []string {
 }
 
 // quiesceCfg tunes the quiescence poll. stable = number of consecutive equal
-// captures that mark "done"; poll = delay between captures; timeout = hard cap.
+// captures that mark "done"; poll = delay between captures; timeout = hard cap;
+// busy = optional predicate that, while it reports true for the current capture,
+// forbids settling (the program is still working even if the frame looks static,
+// e.g. Claude is mid-tool-call with the spinner repainted to an identical pixel).
 type quiesceCfg struct {
 	stable  int
 	poll    time.Duration
 	timeout time.Duration
+	busy    func(string) bool
+}
+
+// paneBusy reports whether a capture shows Claude still actively working — its
+// interrupt hint is on screen — so a brief static frame must not be mistaken for
+// a finished turn.
+func paneBusy(capture string) bool {
+	return strings.Contains(capture, "esc to interrupt")
 }
 
 // awaitQuiescence polls capture until the pane text is unchanged for cfg.stable
@@ -93,29 +110,34 @@ type quiesceCfg struct {
 // error, or if ctx is cancelled. An empty capture never counts as settled: a
 // freshly created pane returns "" until the program paints its first frame, so
 // settling on it would baseline against a blank screen and leak the whole first
-// paint into the next turn's diff.
+// paint into the next turn's diff. While cfg.busy reports true the pane is never
+// considered settled, so a static mid-turn frame can't be mistaken for "done".
+//
+// On timeout it returns the last capture seen alongside the error, so a caller
+// can salvage a partial turn (and re-baseline) instead of losing it entirely.
 func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg quiesceCfg) (string, error) {
 	deadline := time.Now().Add(cfg.timeout)
 	var last string
 	same := 0
 	for {
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return last, ctx.Err()
 		}
 		cur, err := capture()
 		if err != nil {
-			return "", err
+			return last, err
 		}
 		if cur == last {
 			same++
 		} else {
 			same, last = 0, cur
 		}
-		if same >= cfg.stable && cur != "" {
+		busy := cfg.busy != nil && cfg.busy(cur)
+		if same >= cfg.stable && cur != "" && !busy {
 			return cur, nil
 		}
 		if time.Now().After(deadline) {
-			return "", fmt.Errorf("tmux pane did not settle within %s", cfg.timeout)
+			return last, fmt.Errorf("tmux pane did not settle within %s", cfg.timeout)
 		}
 		if cfg.poll > 0 {
 			time.Sleep(cfg.poll)
@@ -169,6 +191,7 @@ func (t *tmuxResponder) capturePoll(ctx context.Context) (string, error) {
 		stable:  3,
 		poll:    300 * time.Millisecond,
 		timeout: t.timeout,
+		busy:    paneBusy,
 	})
 }
 
@@ -221,10 +244,19 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
 	}
 	after, err := t.capturePoll(ctx)
+	// Advance the baseline to whatever was on screen even on timeout, so the next
+	// turn diffs against the current pane instead of replaying this turn's output.
+	if after != "" {
+		t.baseline = after
+	}
 	if err != nil {
+		// Salvage whatever Claude produced before the deadline rather than losing
+		// the turn; surface the error only when there's nothing to show.
+		if partial := extractTurn(before, after); partial != "" {
+			return partial, nil
+		}
 		return "", err
 	}
-	t.baseline = after
 	reply := extractTurn(before, after)
 	if reply == "" {
 		// Never silently lose a turn: fall back to the raw diff.
