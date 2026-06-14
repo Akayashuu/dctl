@@ -247,7 +247,7 @@ func dctlCommands() []map[string]any {
 
 // RespondInteraction sends a CHANNEL_MESSAGE_WITH_SOURCE (type 4) reply.
 func (c *Client) RespondInteraction(ctx context.Context, id, token string, r Response) error {
-	data := map[string]any{"content": r.Content}
+	data := map[string]any{"content": r.Content, "allowed_mentions": noMentions}
 	if r.Ephemeral {
 		data["flags"] = 1 << 6 // EPHEMERAL
 	}
@@ -311,7 +311,7 @@ func (c *Client) RespondAutocomplete(ctx context.Context, id, token string, choi
 func (c *Client) EditInteractionResponse(ctx context.Context, appID, token string, r Response) error {
 	req, err := c.newRequest(ctx, http.MethodPatch,
 		"/webhooks/"+appID+"/"+token+"/messages/@original",
-		map[string]any{"content": r.Content})
+		map[string]any{"content": r.Content, "allowed_mentions": noMentions})
 	if err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func (c *Client) EditInteractionResponse(ctx context.Context, appID, token strin
 func (c *Client) UpsertStatusMessage(ctx context.Context, channelID, msgID, content string) (string, error) {
 	if msgID != "" {
 		req, err := c.newRequest(ctx, http.MethodPatch,
-			"/channels/"+channelID+"/messages/"+msgID, map[string]any{"content": content})
+			"/channels/"+channelID+"/messages/"+msgID, map[string]any{"content": content, "allowed_mentions": noMentions})
 		if err == nil {
 			if err := c.do(req, nil); err == nil {
 				return msgID, nil

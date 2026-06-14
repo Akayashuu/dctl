@@ -60,8 +60,33 @@ func chromeLine(line string) bool {
 // extractTurn turns a before/after scrollback pair into the clean text Claude
 // added this turn. Empty result means nothing new survived stripping.
 func extractTurn(before, after string) string {
-	lines := stripChrome(newLines(before, after))
+	lines := stripToolBlocks(stripChrome(newLines(before, after)))
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// stripToolBlocks drops tool-call bullet lines and their ⎿ continuation lines,
+// leaving only Claude's prose — the tools are already shown in the live progress
+// message, so the final reply need not repeat them. A tool line is recognized by
+// isToolLine, the same predicate the live feed uses, so a prose line that merely
+// starts with a bullet glyph (e.g. "● note: …") is never mistaken for a tool and
+// dropped. Blank lines inside a tool block (between the bullet and its ⎿ results)
+// don't end the block, so a result is never leaked back into the reply.
+func stripToolBlocks(lines []string) []string {
+	var out []string
+	inTool := false
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if isToolLine(t) {
+			inTool = true
+			continue
+		}
+		if inTool && (t == "" || strings.HasPrefix(t, "⎿")) {
+			continue // blank or continuation/result line within the tool block
+		}
+		inTool = false
+		out = append(out, l)
+	}
+	return out
 }
 
 // stripChrome drops chrome lines and collapses runs of blank lines, returning
@@ -96,6 +121,9 @@ type quiesceCfg struct {
 	poll    time.Duration
 	timeout time.Duration
 	busy    func(string) bool
+	// onFrame, when non-nil, is called once per changed capture with the current
+	// pane text, so a caller can stream intermediate state (e.g. tool progress).
+	onFrame func(string)
 }
 
 // paneBusy reports whether a capture shows Claude still actively working — its
@@ -131,6 +159,9 @@ func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg qu
 			same++
 		} else {
 			same, last = 0, cur
+			if cfg.onFrame != nil && cur != "" {
+				cfg.onFrame(cur)
+			}
 		}
 		busy := cfg.busy != nil && cfg.busy(cur)
 		if same >= cfg.stable && cur != "" && !busy {
@@ -208,12 +239,13 @@ func (t *tmuxResponder) capture(ctx context.Context) (string, error) {
 	return tmuxRunCtx(ctx, "capture-pane", "-p", "-S", "-", "-t", t.sessName)
 }
 
-func (t *tmuxResponder) capturePoll(ctx context.Context) (string, error) {
+func (t *tmuxResponder) capturePoll(ctx context.Context, onFrame func(string)) (string, error) {
 	return awaitQuiescence(ctx, func() (string, error) { return t.capture(ctx) }, quiesceCfg{
 		stable:  3,
 		poll:    300 * time.Millisecond,
 		timeout: t.timeout,
 		busy:    paneBusy,
+		onFrame: onFrame,
 	})
 }
 
@@ -246,7 +278,7 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	// Wait for the TUI to finish drawing its first prompt before we type. On
 	// failure the pane is left for Close (or the next start's stale-kill) to reap;
 	// started stays false so we never type against an unsettled baseline.
-	settled, err := t.capturePoll(ctx)
+	settled, err := t.capturePoll(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -262,7 +294,7 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
-		if _, err := t.turn(ctx, p); err != nil {
+		if _, err := t.turn(ctx, p, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "dctl tmux: init prompt %d failed: %v\n", i+1, err)
 		}
 	}
@@ -329,10 +361,10 @@ func (t *tmuxResponder) InjectChoice(ctx context.Context, value string) (string,
 		// Nothing has been typed yet, so there is no prompt to answer.
 		return "", fmt.Errorf("tmux: no session to inject choice into")
 	}
-	return t.turn(ctx, normalizeNewlines(value))
+	return t.turn(ctx, normalizeNewlines(value), nil)
 }
 
-func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
+func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, onEvent func(Event)) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.started {
@@ -342,14 +374,14 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 	}
 	// Preserve the message's line structure; typeText bracket-pastes multi-line
 	// input so embedded newlines stay literal instead of submitting early.
-	return t.turn(ctx, normalizeNewlines(m.Content))
+	return t.turn(ctx, normalizeNewlines(m.Content), onEvent)
 }
 
 // turn types one already-sanitized line into the pane, submits it, waits for the
 // pane to settle, and returns the cleaned text Claude added this turn. It assumes
 // t.mu is held and the pane is started; it is shared by Respond and the priming
 // loop in start().
-func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
+func (t *tmuxResponder) turn(ctx context.Context, text string, onEvent func(Event)) (string, error) {
 	before := t.baseline
 	t.pending = nil // cleared up front; a new choice prompt re-sets it below
 	if err := t.typeText(ctx, text); err != nil {
@@ -358,7 +390,28 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	if out, err := tmuxRunCtx(ctx, "send-keys", "-t", t.sessName, "Enter"); err != nil {
 		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
 	}
-	after, err := t.capturePoll(ctx)
+	// emitted counts the tools already streamed this turn. Dedup is positional:
+	// the TUI scrollback is append-only above the input box, so a tool already
+	// seen keeps its index across repaints and is never emitted twice. lastLines
+	// skips the re-parse on spinner-only repaints (frame changed but no line was
+	// added), so a verbose turn stays roughly O(lines) instead of O(lines×frames).
+	emitted := 0
+	lastLines := -1
+	var onFrame func(string)
+	if onEvent != nil {
+		onFrame = func(frame string) {
+			nl := newLines(before, frame)
+			if len(nl) == lastLines {
+				return // no line added since the last parse → no new tool possible
+			}
+			lastLines = len(nl)
+			tools := parseToolEvents(strings.Join(nl, "\n"))
+			for ; emitted < len(tools); emitted++ {
+				onEvent(Event{Kind: "tool", Tool: tools[emitted].Tool, Detail: tools[emitted].Detail})
+			}
+		}
+	}
+	after, err := t.capturePoll(ctx, onFrame)
 	// Advance the baseline to whatever was on screen even on timeout, so the next
 	// turn diffs against the current pane instead of replaying this turn's output.
 	if after != "" {
@@ -387,8 +440,11 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	}
 	reply := extractTurn(before, after)
 	if reply == "" {
-		// Never silently lose a turn: fall back to the raw diff.
-		reply = strings.TrimSpace(strings.Join(newLines(before, after), "\n"))
+		// A turn that was all tool calls and no prose strips to nothing. Never
+		// silently lose it, but don't dump raw ⏺/⎿ markup either — fall back to the
+		// chrome-stripped diff (tool blocks kept, TUI furniture removed) so the
+		// reply is at least readable when there's no prose to show.
+		reply = strings.TrimSpace(strings.Join(stripChrome(newLines(before, after)), "\n"))
 	}
 	return reply, nil
 }

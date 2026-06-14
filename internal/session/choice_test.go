@@ -34,6 +34,37 @@ func TestParseChoicePromptFromFixture(t *testing.T) {
 	}
 }
 
+// Plan-mode / "Ready to code?" prompts survive --dangerously-skip-permissions
+// (they are not tool-permission gates), so they are the realistic live trigger
+// for a select menu. They render in the same boxed, glyph-marked numbered form
+// and must parse just like a permission prompt.
+func TestParseChoicePromptPlanMode(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "claude_plan_choice.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := parseChoicePrompt(string(b))
+	if !ok {
+		t.Fatal("expected the plan-mode prompt to be detected")
+	}
+	if p.Question != "Ready to code?" {
+		t.Fatalf("question = %q, want %q", p.Question, "Ready to code?")
+	}
+	want := []choiceOption{
+		{Key: "1", Label: "Yes, and auto-accept edits"},
+		{Key: "2", Label: "Yes, and manually approve edits"},
+		{Key: "3", Label: "No, keep planning"},
+	}
+	if len(p.Options) != len(want) {
+		t.Fatalf("got %d options, want %d: %+v", len(p.Options), len(want), p.Options)
+	}
+	for i, w := range want {
+		if p.Options[i] != w {
+			t.Errorf("option %d = %+v, want %+v", i, p.Options[i], w)
+		}
+	}
+}
+
 // A numbered list in ordinary prose has no selector glyph, so it must NOT be
 // mistaken for an interactive prompt.
 func TestParseChoicePromptIgnoresProseList(t *testing.T) {

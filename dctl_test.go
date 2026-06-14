@@ -49,6 +49,25 @@ func TestReadReversesToChronological(t *testing.T) {
 	}
 }
 
+func TestSendDisablesMentions(t *testing.T) {
+	// Bot replies echo Claude/tool output verbatim, so the outbound body must
+	// carry allowed_mentions:{parse:[]} to keep an "@everyone" in that text from
+	// pinging the guild.
+	var body string
+	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		buf := make([]byte, r.ContentLength)
+		r.Body.Read(buf)
+		body = string(buf)
+		w.Write([]byte(`{"id":"1"}`))
+	})
+	if _, err := c.Send(context.Background(), "", "@everyone hi"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, `"allowed_mentions":{"parse":[]}`) {
+		t.Fatalf("Send body missing allowed_mentions: %s", body)
+	}
+}
+
 func TestResolveChannelFallsBackToDefault(t *testing.T) {
 	c := New("tok", "defchan")
 	if ch, _ := c.resolveChannel(""); ch != "defchan" {

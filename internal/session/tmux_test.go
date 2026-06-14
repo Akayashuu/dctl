@@ -284,6 +284,74 @@ func TestAwaitQuiescenceTimeout(t *testing.T) {
 	}
 }
 
+func TestAwaitQuiescenceOnFrame(t *testing.T) {
+	frames := []string{"a", "a", "b", "b", "b"}
+	i := 0
+	cap := func() (string, error) {
+		f := frames[i]
+		if i < len(frames)-1 {
+			i++
+		}
+		return f, nil
+	}
+	var seen []string
+	_, err := awaitQuiescence(context.Background(), cap, quiesceCfg{
+		stable:  3,
+		poll:    0,
+		timeout: time.Second,
+		onFrame: func(s string) { seen = append(seen, s) },
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"a", "b"}
+	if len(seen) != len(want) {
+		t.Fatalf("got frames %v, want %v", seen, want)
+	}
+	for j := range want {
+		if seen[j] != want[j] {
+			t.Errorf("frame %d: got %q want %q", j, seen[j], want[j])
+		}
+	}
+}
+
+func TestExtractTurnStripsToolBlocks(t *testing.T) {
+	before := " ▐▛███▜▌  Claude Code\n> hi"
+	after := before + "\nI'll run the tests.\n⏺ Bash(npm test)\n  ⎿ 12 passed\n  ⎿ done\nAll green."
+	got := extractTurn(before, after)
+	want := "I'll run the tests.\nAll green."
+	if got != want {
+		t.Fatalf("extractTurn = %q, want %q", got, want)
+	}
+}
+
+func TestStripToolBlocksKeepsProseBullet(t *testing.T) {
+	// A prose line starting with a bullet glyph but not matching a tool call must
+	// survive — only real tool lines (and their ⎿ continuations) are dropped.
+	lines := []string{"● note: this is prose", "⏺ Bash(ls)", "  ⎿ a", "  ⎿ b", "Done."}
+	got := stripToolBlocks(lines)
+	want := []string{"● note: this is prose", "Done."}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestStripToolBlocksBlankLineWithinBlock(t *testing.T) {
+	// A blank line between a tool bullet and its ⎿ results must not end the block
+	// and leak the results back into the reply.
+	lines := []string{"⏺ Bash(ls)", "", "  ⎿ result", "Prose after."}
+	got := stripToolBlocks(lines)
+	want := []string{"Prose after."}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 var n int
 
 func changing() string { n++; return strings.Repeat("x", n) }

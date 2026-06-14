@@ -76,7 +76,7 @@ func (c *Client) SendChoiceMenu(ctx context.Context, channelID, replyTo, content
 func (c *Client) AckComponent(ctx context.Context, id, token, content string) error {
 	body := map[string]any{
 		"type": 7, // UPDATE_MESSAGE
-		"data": map[string]any{"content": content, "components": []any{}},
+		"data": map[string]any{"content": content, "components": []any{}, "allowed_mentions": noMentions},
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/interactions/"+id+"/"+token+"/callback", body)
 	if err != nil {
