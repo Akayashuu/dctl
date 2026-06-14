@@ -96,6 +96,9 @@ type quiesceCfg struct {
 	poll    time.Duration
 	timeout time.Duration
 	busy    func(string) bool
+	// onFrame, when non-nil, is called once per changed capture with the current
+	// pane text, so a caller can stream intermediate state (e.g. tool progress).
+	onFrame func(string)
 }
 
 // paneBusy reports whether a capture shows Claude still actively working — its
@@ -131,6 +134,9 @@ func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg qu
 			same++
 		} else {
 			same, last = 0, cur
+			if cfg.onFrame != nil && cur != "" {
+				cfg.onFrame(cur)
+			}
 		}
 		busy := cfg.busy != nil && cfg.busy(cur)
 		if same >= cfg.stable && cur != "" && !busy {

@@ -284,6 +284,37 @@ func TestAwaitQuiescenceTimeout(t *testing.T) {
 	}
 }
 
+func TestAwaitQuiescenceOnFrame(t *testing.T) {
+	frames := []string{"a", "a", "b", "b", "b"}
+	i := 0
+	cap := func() (string, error) {
+		f := frames[i]
+		if i < len(frames)-1 {
+			i++
+		}
+		return f, nil
+	}
+	var seen []string
+	_, err := awaitQuiescence(context.Background(), cap, quiesceCfg{
+		stable:  3,
+		poll:    0,
+		timeout: time.Second,
+		onFrame: func(s string) { seen = append(seen, s) },
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"a", "b"}
+	if len(seen) != len(want) {
+		t.Fatalf("got frames %v, want %v", seen, want)
+	}
+	for j := range want {
+		if seen[j] != want[j] {
+			t.Errorf("frame %d: got %q want %q", j, seen[j], want[j])
+		}
+	}
+}
+
 var n int
 
 func changing() string { n++; return strings.Repeat("x", n) }
