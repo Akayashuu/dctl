@@ -386,7 +386,7 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, onEvent func
 	}
 	// Preserve the message's line structure; typeText bracket-pastes multi-line
 	// input so embedded newlines stay literal instead of submitting early.
-	return t.turn(ctx, normalizeNewlines(m.Content), onEvent)
+	return t.turn(ctx, normalizeNewlines(withAttachments(m.Content, m.Attachments)), onEvent)
 }
 
 // turn types one already-sanitized line into the pane, submits it, waits for the
@@ -531,6 +531,14 @@ func tmuxSessionName(channel string) string {
 // no-op when no such session exists. Safe to call for non-tmux backends.
 func KillTmuxSession(channel string) {
 	_, _ = tmuxRun("kill-session", "-t", tmuxSessionName(channel))
+}
+
+// TmuxSessionExists reports whether the persistent pane for channel is still
+// alive. Symmetric to KillTmuxSession: same name derivation, best-effort. A
+// missing tmux binary or absent session both yield false.
+func TmuxSessionExists(channel string) bool {
+	_, err := tmuxRun("has-session", "-t", tmuxSessionName(channel))
+	return err == nil
 }
 
 // sanitizeSessionName folds characters tmux rejects in a session name ("." and
