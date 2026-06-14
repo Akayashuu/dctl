@@ -47,6 +47,7 @@ type Options struct {
 	ProgressKeep bool          // keep the full running list instead of collapsing to a summary
 	Backend      string        // "stream" | "oneshot" | "tmux" (empty → derived from Stream)
 	TmuxTimeout  time.Duration // tmux backend: max wait for a turn to settle (0 = default)
+	InitPrompts  []string      // tmux backend: priming messages typed once after the pane settles
 }
 
 // resolveBackend picks the responder backend. An explicit backend always wins.
@@ -136,7 +137,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	oneShot := func(ctx context.Context, mm session.DctlMessage) (string, error) {
 		return runCmd(ctx, o.Cmd, mm)
 	}
-	resp := session.NewResponder(ctx, backend, o.Cmd, o.Model, "", ch, o.TmuxTimeout, oneShot)
+	resp := session.NewResponder(ctx, backend, o.Cmd, o.Model, "", ch, o.TmuxTimeout, o.InitPrompts, oneShot)
 	defer resp.Close()
 
 	auth := &authorizer{o: o}

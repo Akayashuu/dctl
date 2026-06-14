@@ -13,7 +13,7 @@ func TestTmuxResponderIntegration(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	r := newTmuxResponder("dctl-test-"+t.Name(), "", []string{"bash", "--norc"}, "", 10*time.Second)
+	r := newTmuxResponder("dctl-test-"+t.Name(), "", []string{"bash", "--norc"}, "", 10*time.Second, nil)
 	defer r.Close()
 	out, err := r.Respond(context.Background(), DctlMessage{Content: "echo hi"}, nil)
 	if err != nil {
@@ -21,6 +21,28 @@ func TestTmuxResponderIntegration(t *testing.T) {
 	}
 	if !strings.Contains(out, "hi") {
 		t.Fatalf("expected output to contain %q, got %q", "hi", out)
+	}
+}
+
+// Priming runs at start() before the first human turn; with a bash pane the init
+// commands execute, the baseline advances past them, and the human turn still
+// returns its own output (priming is not echoed back).
+func TestTmuxResponderPriming(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	r := newTmuxResponder("dctl-test-"+t.Name(), "", []string{"bash", "--norc"}, "", 10*time.Second,
+		[]string{"echo primed", "   "}) // blank prompt is skipped, not sent
+	defer r.Close()
+	out, err := r.Respond(context.Background(), DctlMessage{Content: "echo hi"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "hi") {
+		t.Fatalf("expected human turn output %q, got %q", "hi", out)
+	}
+	if strings.Contains(out, "primed") {
+		t.Fatalf("priming output should not echo into the human turn: %q", out)
 	}
 }
 

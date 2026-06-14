@@ -40,6 +40,7 @@ session per message.
 | `-v` | off | Log activity to stderr. |
 | `--backend tmux\|stream\|oneshot` | `tmux` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
 | `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
+| `--tmux-init MSG` | — | tmux backend: priming message typed once after the pane settles, before any human turn. **Repeatable** (order preserved). |
 
 Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 `DCTL_MESSAGE_ID`, `DCTL_CHANNEL`.
@@ -67,6 +68,17 @@ The bridge can talk to Claude three ways:
 
 From the daemon: `/session create name:foo backend:tmux` creates a tmux-backed
 session; the backend is persisted, so a daemon restart respawns it the same way.
+
+**Priming (init prompts).** The tmux backend can type N messages into the pane
+once it settles, *before* the first human turn — e.g. "read CLAUDE.md and wait".
+Three ways, same effect (all persisted into the session so a restart replays
+them): `--tmux-init MSG` (repeatable) on `dctl bridge`; `"initPrompts": [...]` in
+`config.json` (daemon default for every new session); and `/session create
+init:"first || second"` (`||` separates prompts, overrides the config default).
+Priming is **best-effort**: a prompt that errors or times out is logged and the
+rest — plus the first human message — still go through. Each priming turn
+advances the baseline, so the human's first reply never echoes the priming
+output back.
 
 ### Security (read before exposing tmux)
 

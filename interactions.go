@@ -190,6 +190,7 @@ func dctlCommands() []map[string]any {
 				}},
 				{"name": "project", "description": "Workspace project to start from (see /workspace list)", "type": typeStr, "autocomplete": true},
 				{"name": "clone", "description": "Remote repo to clone first (owner/name or URL)", "type": typeStr, "autocomplete": true},
+				{"name": "init", "description": "tmux priming sent before your first message (separate several with ||)", "type": typeStr},
 			}},
 			{"name": "close", "description": "Close a session", "type": typeSub, "options": []map[string]any{
 				{"name": "name", "description": "Session name", "type": typeStr, "required": true, "autocomplete": true},

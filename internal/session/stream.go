@@ -20,13 +20,14 @@ import (
 //
 // dir is the working directory (tmux/stream); channel seeds the tmux session name.
 // tmuxTimeout caps how long the tmux backend waits for a turn to settle (0 =
-// default); it is ignored by the other backends.
-func NewResponder(ctx context.Context, backend, cmdStr, model, dir, channel string, tmuxTimeout time.Duration, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
+// default); it is ignored by the other backends. initPrompts are priming
+// messages the tmux backend types once after the pane settles (also tmux-only).
+func NewResponder(ctx context.Context, backend, cmdStr, model, dir, channel string, tmuxTimeout time.Duration, initPrompts []string, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
 	switch backend {
 	case "oneshot":
 		return &oneShotResponder{run: oneShot}
 	case "tmux":
-		return newTmuxResponder(tmuxSessionName(channel), dir, strings.Fields(cmdStr), model, tmuxTimeout)
+		return newTmuxResponder(tmuxSessionName(channel), dir, strings.Fields(cmdStr), model, tmuxTimeout, initPrompts)
 	default: // "stream"
 		r := &streamResponder{ctx: ctx, base: streamBase(strings.Fields(cmdStr)), model: model}
 		r.dir = dir

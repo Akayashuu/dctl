@@ -3,11 +3,22 @@ package main
 import (
 	"context"
 	"flag"
+	"strings"
 	"time"
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/bridge"
 )
+
+// stringList is a repeatable string flag: each occurrence appends one value, so
+// `--tmux-init a --tmux-init b` yields ["a","b"] in order.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ", ") }
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
 
 // runBridge links a channel to an external command: it watches for new human
 // messages and, for each, runs `--cmd` with the message text, then posts the
@@ -37,6 +48,8 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	progressKeep := fs.Bool("progress-keep", false, "keep the full progress list instead of collapsing to a one-line summary")
 	backend := fs.String("backend", "", "responder backend: tmux (default) | stream | oneshot")
 	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
+	var initPrompts stringList
+	fs.Var(&initPrompts, "tmux-init", "tmux backend: priming message typed once after the pane settles (repeatable)")
 	fs.Parse(args)
 
 	return bridge.Run(ctx, c, bridge.Options{
@@ -56,6 +69,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		ProgressKeep: *progressKeep,
 		Backend:      *backend,
 		TmuxTimeout:  *tmuxTimeout,
+		InitPrompts:  initPrompts,
 	})
 }
 
@@ -64,3 +78,5 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 var bridgeOptionsHasParticipants = bridge.Options{}.Participants
 
 var bridgeOptionsHasBackend = bridge.Options{}.Backend
+
+var bridgeOptionsHasInitPrompts = bridge.Options{}.InitPrompts

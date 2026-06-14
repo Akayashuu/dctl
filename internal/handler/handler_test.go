@@ -127,7 +127,7 @@ func newTestHandlerWithUpdater(t *testing.T, homeType int) (*Handler, *fakeUpdat
 	up := &fakeUpdater{version: "abc1234"}
 	st := state.NewState(t.TempDir() + "/s.json")
 	st.AddAllow("owner")
-	return NewHandler(d, sup, wt, fg, up, st, "claude", t.TempDir()), up, d, sup, wt, fg, st
+	return NewHandler(d, sup, wt, fg, up, st, "claude", nil, t.TempDir()), up, d, sup, wt, fg, st
 }
 
 func it(user, cmd string, sub string, opts ...dctl.InteractionOption) dctl.Interaction {
@@ -215,6 +215,50 @@ func TestSessionCreateText(t *testing.T) {
 	// No backend: option given → defaults to the interactive tmux TUI.
 	if sess.Backend != "tmux" {
 		t.Fatalf("expected default backend tmux, got %q", sess.Backend)
+	}
+}
+
+func TestSplitInit(t *testing.T) {
+	got := splitInit("read CLAUDE.md || wait for orders ||  ")
+	want := []string{"read CLAUDE.md", "wait for orders"}
+	if len(got) != len(want) {
+		t.Fatalf("splitInit length = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("splitInit[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+	if splitInit("   ") != nil {
+		t.Fatalf("blank-only init should yield nil, got %v", splitInit("   "))
+	}
+}
+
+func TestSessionCreateInitOptionPersists(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"},
+		dctl.InteractionOption{Name: "init", Value: "boot up || stand by"}))
+	sess, ok := st.FindSession("demo")
+	if !ok {
+		t.Fatal("session not created")
+	}
+	want := []string{"boot up", "stand by"}
+	if len(sess.InitPrompts) != len(want) || sess.InitPrompts[0] != want[0] || sess.InitPrompts[1] != want[1] {
+		t.Fatalf("init prompts not persisted: %v", sess.InitPrompts)
+	}
+}
+
+func TestSessionCreateInitDefaultsToConfig(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	h.defaultInit = []string{"from config"} // config.json initPrompts default
+	st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+	h.Handle(context.Background(), it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Value: "demo"}))
+	sess, _ := st.FindSession("demo")
+	if len(sess.InitPrompts) != 1 || sess.InitPrompts[0] != "from config" {
+		t.Fatalf("expected config default priming, got %v", sess.InitPrompts)
 	}
 }
 

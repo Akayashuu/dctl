@@ -155,6 +155,7 @@ type tmuxResponder struct {
 	dir      string
 	cmd      []string // program launched in the pane (e.g. ["claude","--dangerously-skip-permissions"])
 	timeout  time.Duration
+	init     []string // priming messages sent once after the pane settles, before any human turn
 
 	mu       sync.Mutex
 	started  bool
@@ -162,8 +163,9 @@ type tmuxResponder struct {
 }
 
 // newTmuxResponder builds a responder. base is the pane command (defaults to
-// claude --dangerously-skip-permissions); model is appended when set.
-func newTmuxResponder(sessName, dir string, base []string, model string, timeout time.Duration) *tmuxResponder {
+// claude --dangerously-skip-permissions); model is appended when set. init holds
+// priming messages typed once after the first prompt settles (best-effort).
+func newTmuxResponder(sessName, dir string, base []string, model string, timeout time.Duration, init []string) *tmuxResponder {
 	cmd := append([]string{}, base...)
 	if len(cmd) == 0 {
 		cmd = []string{"claude", "--dangerously-skip-permissions"}
@@ -174,7 +176,7 @@ func newTmuxResponder(sessName, dir string, base []string, model string, timeout
 	if timeout <= 0 {
 		timeout = 5 * time.Minute
 	}
-	return &tmuxResponder{sessName: sessName, dir: dir, cmd: cmd, timeout: timeout}
+	return &tmuxResponder{sessName: sessName, dir: dir, cmd: cmd, timeout: timeout, init: init}
 }
 
 // tmuxRun runs a tmux command without cancellation — used for best-effort
@@ -239,6 +241,20 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	}
 	t.baseline = settled
 	t.started = true
+	// Priming: type the configured init messages once, before any human turn.
+	// Best-effort — a failed/timed-out prompt is logged and the rest (plus the
+	// first human message) still go through; amorçage must never block a session.
+	// Each turn advances the baseline, so the human's first reply diffs against
+	// the post-priming pane and never echoes the priming output back.
+	for i, p := range t.init {
+		p = sanitizeInput(p)
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		if _, err := t.turn(ctx, p); err != nil {
+			fmt.Fprintf(os.Stderr, "dctl tmux: init prompt %d failed: %v\n", i+1, err)
+		}
+	}
 	return nil
 }
 
@@ -257,11 +273,18 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 			return "", err
 		}
 	}
-	before := t.baseline
 	// Collapse embedded newlines to spaces: a literal newline sent to the TUI is
 	// read as Enter, which would submit the message early and desync the turn.
 	// A single coherent line is the v1 contract (see SKILL.md known limitation).
-	text := sanitizeInput(m.Content)
+	return t.turn(ctx, sanitizeInput(m.Content))
+}
+
+// turn types one already-sanitized line into the pane, submits it, waits for the
+// pane to settle, and returns the cleaned text Claude added this turn. It assumes
+// t.mu is held and the pane is started; it is shared by Respond and the priming
+// loop in start().
+func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
+	before := t.baseline
 	if out, err := tmuxRunCtx(ctx, sendLiteralArgs(t.sessName, text)...); err != nil {
 		return "", fmt.Errorf("tmux send-keys: %v: %s", err, out)
 	}
