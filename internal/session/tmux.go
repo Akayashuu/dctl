@@ -214,12 +214,13 @@ func (t *tmuxResponder) capture(ctx context.Context) (string, error) {
 	return tmuxRunCtx(ctx, "capture-pane", "-p", "-S", "-", "-t", t.sessName)
 }
 
-func (t *tmuxResponder) capturePoll(ctx context.Context) (string, error) {
+func (t *tmuxResponder) capturePoll(ctx context.Context, onFrame func(string)) (string, error) {
 	return awaitQuiescence(ctx, func() (string, error) { return t.capture(ctx) }, quiesceCfg{
 		stable:  3,
 		poll:    300 * time.Millisecond,
 		timeout: t.timeout,
 		busy:    paneBusy,
+		onFrame: onFrame,
 	})
 }
 
@@ -252,7 +253,7 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	// Wait for the TUI to finish drawing its first prompt before we type. On
 	// failure the pane is left for Close (or the next start's stale-kill) to reap;
 	// started stays false so we never type against an unsettled baseline.
-	settled, err := t.capturePoll(ctx)
+	settled, err := t.capturePoll(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -268,7 +269,7 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
-		if _, err := t.turn(ctx, p); err != nil {
+		if _, err := t.turn(ctx, p, nil); err != nil {
 			fmt.Fprintf(os.Stderr, "dctl tmux: init prompt %d failed: %v\n", i+1, err)
 		}
 	}
@@ -335,10 +336,10 @@ func (t *tmuxResponder) InjectChoice(ctx context.Context, value string) (string,
 		// Nothing has been typed yet, so there is no prompt to answer.
 		return "", fmt.Errorf("tmux: no session to inject choice into")
 	}
-	return t.turn(ctx, normalizeNewlines(value))
+	return t.turn(ctx, normalizeNewlines(value), nil)
 }
 
-func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
+func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, onEvent func(Event)) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.started {
@@ -348,14 +349,14 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 	}
 	// Preserve the message's line structure; typeText bracket-pastes multi-line
 	// input so embedded newlines stay literal instead of submitting early.
-	return t.turn(ctx, normalizeNewlines(m.Content))
+	return t.turn(ctx, normalizeNewlines(m.Content), onEvent)
 }
 
 // turn types one already-sanitized line into the pane, submits it, waits for the
 // pane to settle, and returns the cleaned text Claude added this turn. It assumes
 // t.mu is held and the pane is started; it is shared by Respond and the priming
 // loop in start().
-func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
+func (t *tmuxResponder) turn(ctx context.Context, text string, onEvent func(Event)) (string, error) {
 	before := t.baseline
 	t.pending = nil // cleared up front; a new choice prompt re-sets it below
 	if err := t.typeText(ctx, text); err != nil {
@@ -364,7 +365,17 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	if out, err := tmuxRunCtx(ctx, "send-keys", "-t", t.sessName, "Enter"); err != nil {
 		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
 	}
-	after, err := t.capturePoll(ctx)
+	emitted := 0
+	var onFrame func(string)
+	if onEvent != nil {
+		onFrame = func(frame string) {
+			tools := parseToolEvents(strings.Join(newLines(before, frame), "\n"))
+			for ; emitted < len(tools); emitted++ {
+				onEvent(Event{Kind: "tool", Tool: tools[emitted].Tool, Detail: tools[emitted].Detail})
+			}
+		}
+	}
+	after, err := t.capturePoll(ctx, onFrame)
 	// Advance the baseline to whatever was on screen even on timeout, so the next
 	// turn diffs against the current pane instead of replaying this turn's output.
 	if after != "" {
