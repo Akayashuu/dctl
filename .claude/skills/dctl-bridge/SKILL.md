@@ -38,9 +38,30 @@ session per message.
 | `--state FILE` | — | Persist last-seen id. **Authoritative**: a restart resumes exactly here and never replays handled messages. Always pass it. |
 | `--after ID` | — | Seeds the start id for the **first run only** (ignored once `--state` exists). |
 | `-v` | off | Log activity to stderr. |
+| `--backend stream\|oneshot\|tmux` | derived from `--stream` | Responder strategy (see below). |
+| `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
 
 Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 `DCTL_MESSAGE_ID`, `DCTL_CHANNEL`.
+
+## Backends
+
+The bridge can talk to Claude three ways:
+
+- **`stream`** (default) — one persistent `claude -p` **stream-json** process.
+  Structured, token-frugal, context stays hot. Permission prompts are not
+  interactive (Claude runs pre-approved).
+- **`oneshot`** — runs `--cmd` fresh per message (arbitrary non-Claude commands).
+- **`tmux`** — drives the **interactive `claude` TUI** inside a tmux session and
+  relays its **text** back (no screenshots/ANSI). One persistent `claude` per
+  channel (`tmux send-keys` in, `capture-pane` out, diffed and chrome-stripped).
+  Launched with `--dangerously-skip-permissions`, so there are no permission
+  prompts to answer yet (rendering prompts as Discord buttons is a future
+  phase). Requires the `tmux` binary on PATH. You can `tmux attach -t
+  dctl-<channel>` to land in the same live session the bridge is driving.
+
+From the daemon: `/session create name:foo backend:tmux` creates a tmux-backed
+session; the backend is persisted, so a daemon restart respawns it the same way.
 
 ## Feedback while it works
 
