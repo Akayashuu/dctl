@@ -214,6 +214,29 @@ func TestArgsWithSpacesAreQuoted(t *testing.T) {
 	}
 }
 
+// A baked-in default --cmd (model/effort) must land in the unit's ExecStart as a
+// single quoted token, so serve receives the whole "claude …" string as one arg.
+func TestDefaultCmdBakedIntoUnit(t *testing.T) {
+	const cmd = "claude --model claude-opus-4-8 --effort low"
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		c := testConfig(goos)
+		c.ExtraArgs = []string{"--cmd", cmd}
+		p, err := BuildPlan(c)
+		if err != nil {
+			t.Fatalf("plan %s: %v", goos, err)
+		}
+		content := p.Files[0].Content
+		if !strings.Contains(content, "claude-opus-4-8") {
+			t.Errorf("%s: ExecStart missing the baked model:\n%s", goos, content)
+		}
+		// Unquoted, the value would be five separate tokens; its presence as a raw
+		// run means it was NOT quoted into one arg.
+		if strings.Contains(content, "--cmd "+cmd) {
+			t.Errorf("%s: default cmd not quoted as a single token:\n%s", goos, content)
+		}
+	}
+}
+
 func TestUninstallAndStatus(t *testing.T) {
 	for _, os := range []string{"linux", "darwin", "windows"} {
 		if _, err := BuildUninstall(testConfig(os)); err != nil {

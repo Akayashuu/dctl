@@ -14,7 +14,7 @@ import (
 // boot-started service (systemd user unit on Linux, launchd LaunchAgent on
 // macOS, Task Scheduler task on Windows).
 func runService(ctx context.Context, args []string) error {
-	const usage = "usage: dctl service <install|uninstall|status|restart|update> [--health-addr ADDR] [--env-file PATH] [--source DIR] [--no-pull]"
+	const usage = "usage: dctl service <install|uninstall|status|restart|update> [--health-addr ADDR] [--env-file PATH] [--cmd 'claude …'] [--source DIR] [--no-pull]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -46,6 +46,11 @@ func runService(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("service", flag.ContinueOnError)
 	healthAddr := fs.String("health-addr", cfg.HealthAddr, "value for serve --health-addr (empty disables the health endpoint)")
 	envFile := fs.String("env-file", cfg.EnvFile, "path to the 0600 secrets file the service sources")
+	// --cmd bakes a default bridged command into the unit's ExecStart (serve
+	// --cmd). It sets the model/effort/etc. for every new session, e.g.
+	// 'claude --model claude-opus-4-8 --effort low'. A per-session cmd: still
+	// overrides it (see handler.sessionCreate).
+	defaultCmd := fs.String("cmd", "", "default bridged command baked into the unit (e.g. 'claude --model claude-opus-4-8 --effort low')")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -57,6 +62,12 @@ func runService(ctx context.Context, args []string) error {
 
 	switch sub {
 	case "install":
+		if *defaultCmd != "" {
+			// One ExtraArg pair: serve parses "--cmd" then the whole quoted string
+			// as a single value (serveArgs appends ExtraArgs verbatim; the unit
+			// builder quotes the space-bearing value so it stays one argv token).
+			cfg.ExtraArgs = append(cfg.ExtraArgs, "--cmd", *defaultCmd)
+		}
 		// Install prints a Note describing the exact state (started, or enabled
 		// at boot but awaiting a token), so don't assert "started" here.
 		return service.Install(ctx, cfg)
