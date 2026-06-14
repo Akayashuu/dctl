@@ -3,7 +3,10 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -112,4 +115,123 @@ func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg qu
 			time.Sleep(cfg.poll)
 		}
 	}
+}
+
+// tmuxResponder drives an interactive `claude` TUI inside a persistent tmux
+// session: one session per bridge, lazily started on the first message and
+// reused for every later message (Claude keeps its context hot). Each turn
+// types the message with send-keys, waits for the pane to settle, and returns
+// the cleaned text Claude added.
+type tmuxResponder struct {
+	sessName string
+	dir      string
+	cmd      []string // program launched in the pane (e.g. ["claude","--dangerously-skip-permissions"])
+	timeout  time.Duration
+
+	mu       sync.Mutex
+	started  bool
+	baseline string // cleaned-up: full capture after the previous turn settled
+}
+
+// newTmuxResponder builds a responder. base is the pane command (defaults to
+// claude --dangerously-skip-permissions); model is appended when set.
+func newTmuxResponder(sessName, dir string, base []string, model string, timeout time.Duration) *tmuxResponder {
+	cmd := append([]string{}, base...)
+	if len(cmd) == 0 {
+		cmd = []string{"claude", "--dangerously-skip-permissions"}
+	}
+	if model != "" {
+		cmd = append(cmd, "--model", model)
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	return &tmuxResponder{sessName: sessName, dir: dir, cmd: cmd, timeout: timeout}
+}
+
+func tmuxRun(args ...string) (string, error) {
+	out, err := exec.Command("tmux", args...).CombinedOutput()
+	return string(out), err
+}
+
+func (t *tmuxResponder) capture() (string, error) {
+	return tmuxRun("capture-pane", "-p", "-S", "-", "-t", t.sessName)
+}
+
+func (t *tmuxResponder) capturePoll(ctx context.Context) (string, error) {
+	return awaitQuiescence(ctx, t.capture, quiesceCfg{
+		stable:  3,
+		poll:    300 * time.Millisecond,
+		timeout: t.timeout,
+	})
+}
+
+func (t *tmuxResponder) start(ctx context.Context) error {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		return fmt.Errorf("tmux not found on PATH: %w", err)
+	}
+	args := []string{"new-session", "-d", "-s", t.sessName, "-x", "200", "-y", "50"}
+	if t.dir != "" {
+		args = append(args, "-c", t.dir)
+	}
+	args = append(args, strings.Join(t.cmd, " "))
+	if out, err := tmuxRun(args...); err != nil {
+		return fmt.Errorf("tmux new-session: %v: %s", err, out)
+	}
+	// Wait for the TUI to finish drawing its first prompt before we type.
+	settled, err := t.capturePoll(ctx)
+	if err != nil {
+		return err
+	}
+	t.baseline = settled
+	t.started = true
+	return nil
+}
+
+func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.started {
+		if err := t.start(ctx); err != nil {
+			return "", err
+		}
+	}
+	before := t.baseline
+	if out, err := tmuxRun("send-keys", "-t", t.sessName, "-l", m.Content); err != nil {
+		return "", fmt.Errorf("tmux send-keys: %v: %s", err, out)
+	}
+	if out, err := tmuxRun("send-keys", "-t", t.sessName, "Enter"); err != nil {
+		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
+	}
+	after, err := t.capturePoll(ctx)
+	if err != nil {
+		return "", err
+	}
+	t.baseline = after
+	reply := extractTurn(before, after)
+	if reply == "" {
+		// Never silently lose a turn: fall back to the raw diff.
+		reply = strings.TrimSpace(strings.Join(newLines(before, after), "\n"))
+	}
+	return reply, nil
+}
+
+func (t *tmuxResponder) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.started {
+		_, _ = tmuxRun("kill-session", "-t", t.sessName)
+		t.started = false
+	}
+	return nil
+}
+
+// tmuxSessionName derives a collision-safe tmux session name from the channel,
+// namespaced by DCTL_INSTANCE_ID (same scheme as session worktrees).
+func tmuxSessionName(channel string) string {
+	inst := os.Getenv("DCTL_INSTANCE_ID")
+	if inst == "" {
+		return "dctl-" + channel
+	}
+	return "dctl-" + inst + "-" + channel
 }
