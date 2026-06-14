@@ -41,6 +41,7 @@ session per message.
 | `--backend tmux\|stream\|oneshot` | `tmux` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
 | `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
 | `--tmux-init MSG` | — | tmux backend: priming message typed once after the pane settles, before any human turn. **Repeatable** (order preserved). |
+| `--control-socket PATH` | — | tmux backend: unix socket the daemon forwards select-menu clicks to. Set automatically by the supervisor; unset standalone (numeric-reply fallback only). |
 
 Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 `DCTL_MESSAGE_ID`, `DCTL_CHANNEL`.
@@ -56,9 +57,12 @@ The bridge can talk to Claude three ways:
 - **`tmux`** (**default**) — drives the **interactive `claude` TUI** inside a tmux session and
   relays its **text** back (no screenshots/ANSI). One persistent `claude` per
   channel (`tmux send-keys` in, `capture-pane` out, diffed and chrome-stripped).
-  Launched with `--dangerously-skip-permissions`, so there are no permission
-  prompts to answer yet (rendering prompts as Discord buttons is a future
-  phase). Needs the `tmux` binary on PATH — if it's missing the bridge logs a
+  Launched with `--dangerously-skip-permissions`, so tool-permission prompts
+  don't appear; other interactive numbered prompts (model/plan pickers, "how do
+  you want to proceed") are detected and rendered as clean numbered options. You
+  pick by **replying with a number** (typed into the pane next turn) and, under
+  the daemon, via a native **select menu** (see *Interactive choices* below).
+  Needs the `tmux` binary on PATH — if it's missing the bridge logs a
   warning and **falls back to the `stream` backend** automatically (so the
   default still works); `dctl service install` also flags a missing tmux. You can `tmux attach -t
   dctl-<channel>` (or `dctl-<DCTL_INSTANCE_ID>-<channel>` when that env var is
@@ -80,6 +84,20 @@ Priming is **best-effort**: a prompt that errors or times out is logged and the
 rest — plus the first human message — still go through. Each priming turn
 advances the baseline, so the human's first reply never echoes the priming
 output back.
+
+**Interactive choices (select menus).** When a tmux turn ends on a numbered
+prompt, the bridge renders the question + options and the human picks one of two
+ways:
+
+- **Numeric reply** (every mode): reply `1`/`2`/… and it's typed into the pane
+  next turn. The standalone fallback, always available.
+- **Select menu** (daemon only): the reply carries a native Discord dropdown.
+  Clicking it routes through the daemon's gateway to the bridge over a per-session
+  **control socket** (`--control-socket`, set automatically by the supervisor for
+  tmux sessions), which types the pick into the pane — serialized with normal
+  turns so a click never interleaves keystrokes with a message. A standalone
+  bridge has no gateway, so it can't receive clicks; it uses the numeric fallback
+  only. A failed menu post degrades to plain text, so a turn is never lost.
 
 ### Security (read before exposing tmux)
 
