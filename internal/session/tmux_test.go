@@ -1,9 +1,11 @@
 package session
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNewLines(t *testing.T) {
@@ -47,3 +49,38 @@ func TestExtractTurn(t *testing.T) {
 		t.Fatalf("extractTurn = %q, want %q", got, "2 + 2 = 4.")
 	}
 }
+
+func TestAwaitQuiescence(t *testing.T) {
+	seq := []string{"a", "ab", "ab", "ab"} // changes then stabilizes
+	i := 0
+	capture := func() (string, error) {
+		s := seq[i]
+		if i < len(seq)-1 {
+			i++
+		}
+		return s, nil
+	}
+	got, err := awaitQuiescence(context.Background(), capture, quiesceCfg{
+		stable: 2, poll: 0, timeout: 100 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ab" {
+		t.Fatalf("awaitQuiescence = %q, want %q", got, "ab")
+	}
+}
+
+func TestAwaitQuiescenceTimeout(t *testing.T) {
+	capture := func() (string, error) { return changing(), nil }
+	_, err := awaitQuiescence(context.Background(), capture, quiesceCfg{
+		stable: 3, poll: 0, timeout: 1 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("expected timeout error for never-stable pane")
+	}
+}
+
+var n int
+
+func changing() string { n++; return strings.Repeat("x", n) }

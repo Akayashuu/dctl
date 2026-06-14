@@ -1,7 +1,10 @@
 package session
 
 import (
+	"context"
+	"fmt"
 	"strings"
+	"time"
 )
 
 // newLines returns the lines of after that follow the longest common line
@@ -69,4 +72,44 @@ func stripChrome(lines []string) []string {
 		out = append(out, strings.TrimRight(l, " "))
 	}
 	return out
+}
+
+// quiesceCfg tunes the quiescence poll. stable = number of consecutive equal
+// captures that mark "done"; poll = delay between captures; timeout = hard cap.
+type quiesceCfg struct {
+	stable  int
+	poll    time.Duration
+	timeout time.Duration
+}
+
+// awaitQuiescence polls capture until the pane text is unchanged for cfg.stable
+// consecutive reads, then returns that text. It errors on timeout or a capture
+// error, or if ctx is cancelled.
+func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg quiesceCfg) (string, error) {
+	deadline := time.Now().Add(cfg.timeout)
+	var last string
+	same := 0
+	for {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		cur, err := capture()
+		if err != nil {
+			return "", err
+		}
+		if cur == last {
+			same++
+		} else {
+			same, last = 0, cur
+		}
+		if same >= cfg.stable {
+			return cur, nil
+		}
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("tmux pane did not settle within %s", cfg.timeout)
+		}
+		if cfg.poll > 0 {
+			time.Sleep(cfg.poll)
+		}
+	}
 }
