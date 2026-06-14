@@ -369,7 +369,10 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	// run through extractTurn, whose stripChrome would eat the box and leave an
 	// empty or garbled reply. The human picks by replying with a number (typed into
 	// the pane next turn) or, in daemon mode, via a native select menu.
-	if cp, ok := parseChoicePrompt(after); ok {
+	// Detect a choice prompt only among the lines THIS turn drew, not the whole
+	// scrollback — an already-answered prompt lingering above would otherwise
+	// re-match every turn and keep re-posting a menu.
+	if cp, ok := parseChoicePrompt(strings.Join(newLines(before, after), "\n")); ok {
 		cp := cp
 		t.pending = &cp // surfaced to the bridge (PendingChoice) for the select menu
 		return renderChoice(cp), nil

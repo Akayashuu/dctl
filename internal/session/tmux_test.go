@@ -142,6 +142,38 @@ func TestTmuxResponderMultiline(t *testing.T) {
 	}
 }
 
+// End-to-end through real tmux: a turn whose output looks like a choice prompt
+// is rendered as numbered options, surfaces via PendingChoice, and InjectChoice
+// types the pick into the pane as a real keystroke.
+func TestTmuxResponderChoiceFlow(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	r := newTmuxResponder("dctl-test-"+t.Name(), "", []string{"bash", "--norc"}, "", 10*time.Second, nil)
+	defer r.Close()
+	// Emit a choice-prompt-shaped frame (selector glyph + numbered run).
+	out, err := r.Respond(context.Background(),
+		DctlMessage{Content: "printf 'Do you want to proceed?\\n❯ 1. Yes\\n  2. No\\n'"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1. Yes") || !strings.Contains(out, "Reply with a number") {
+		t.Fatalf("expected rendered choice options, got %q", out)
+	}
+	c, ok := r.PendingChoice()
+	if !ok || len(c.Options) != 2 || c.Options[0].Value != "1" {
+		t.Fatalf("PendingChoice did not surface the parsed prompt: ok=%v %+v", ok, c)
+	}
+	// Injecting a pick types it into the pane (here it just runs as a command);
+	// the call must serialize and return without error, and clear the pending state.
+	if _, err := r.InjectChoice(context.Background(), "echo picked-1"); err != nil {
+		t.Fatalf("InjectChoice: %v", err)
+	}
+	if _, ok := r.PendingChoice(); ok {
+		t.Fatal("a normal injected turn should clear the pending choice")
+	}
+}
+
 func TestNormalizeNewlines(t *testing.T) {
 	// CRLF and lone CR canonicalize to LF; line structure is preserved (not flattened).
 	if got := normalizeNewlines("one\ntwo\r\nthree\rfour"); got != "one\ntwo\nthree\nfour" {
