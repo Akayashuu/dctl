@@ -1,6 +1,7 @@
 package session
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -89,4 +90,22 @@ func questionAbove(lines []string, startIdx int) string {
 		return t
 	}
 	return ""
+}
+
+// renderChoice turns a parsed prompt into plain Discord text: the question, the
+// numbered options, and a hint that a numeric reply selects one. This is the
+// fallback rendering used in every mode — a numeric reply flows through the
+// normal turn path and is typed into the pane, which the TUI reads as the
+// selection (daemon mode additionally offers a native select menu).
+func renderChoice(p choicePrompt) string {
+	var b strings.Builder
+	if p.Question != "" {
+		b.WriteString(p.Question)
+		b.WriteByte('\n')
+	}
+	for _, o := range p.Options {
+		fmt.Fprintf(&b, "%s. %s\n", o.Key, o.Label)
+	}
+	b.WriteString("\n_Reply with a number to choose._")
+	return b.String()
 }

@@ -58,6 +58,40 @@ func TestParseChoicePromptRequiresRunFromOne(t *testing.T) {
 	}
 }
 
+func TestRenderChoice(t *testing.T) {
+	p := choicePrompt{
+		Question: "Do you want to proceed?",
+		Options: []choiceOption{
+			{Key: "1", Label: "Yes"},
+			{Key: "2", Label: "No"},
+		},
+	}
+	got := renderChoice(p)
+	want := "Do you want to proceed?\n1. Yes\n2. No\n\n_Reply with a number to choose._"
+	if got != want {
+		t.Fatalf("renderChoice =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// The fixture capture round-trips through parse → render into a clean prompt the
+// human can answer with a digit.
+func TestParseThenRenderRoundTrip(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("testdata", "claude_choice.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := parseChoicePrompt(string(b))
+	if !ok {
+		t.Fatal("fixture should parse")
+	}
+	out := renderChoice(p)
+	for _, want := range []string{"Do you want to proceed?", "1. Yes", "3. No, and tell Claude", "Reply with a number"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered prompt missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestParseChoicePromptUnboxed(t *testing.T) {
 	// Same prompt without box chrome (some widths render unframed).
 	in := strings.Join([]string{

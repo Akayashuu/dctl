@@ -306,6 +306,14 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	if after != "" {
 		t.baseline = after
 	}
+	// A turn that ends on an interactive choice prompt (e.g. a tool-permission
+	// "Do you want to proceed?") is rendered as clean numbered options rather than
+	// run through extractTurn, whose stripChrome would eat the box and leave an
+	// empty or garbled reply. The human picks by replying with a number (typed into
+	// the pane next turn) or, in daemon mode, via a native select menu.
+	if cp, ok := parseChoicePrompt(after); ok {
+		return renderChoice(cp), nil
+	}
 	if err != nil {
 		// Salvage whatever Claude produced before the deadline rather than losing
 		// the turn; surface the error only when there's nothing to show.
