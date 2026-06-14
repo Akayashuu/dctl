@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -13,6 +14,9 @@ import (
 	"github.com/vskstudio/dctl/internal/forge"
 	"github.com/vskstudio/dctl/internal/state"
 )
+
+// maxAutocompleteChoices is Discord's hard cap on autocomplete suggestions.
+const maxAutocompleteChoices = 25
 
 // sessionNameRe constrains a session name to a safe slug: it becomes both a
 // filesystem path (<repo>/.dctl-sessions/<name>) and a git branch
@@ -158,6 +162,42 @@ func (h *Handler) Handle(ctx context.Context, in dctl.Interaction) dctl.Response
 	default:
 		return errf("unknown command %q", in.Data.Name)
 	}
+}
+
+// Autocomplete answers an autocomplete interaction. Only the /session close
+// "name" option is wired: it suggests live session names matching what the user
+// has typed. Any other focused option (or a non-allowlisted user) yields no
+// suggestions, so session names never leak.
+func (h *Handler) Autocomplete(in dctl.Interaction) []dctl.AutocompleteChoice {
+	if !h.st.Allowed(in.Member.User.ID) {
+		return nil
+	}
+	if in.Data.Name != "session" {
+		return nil
+	}
+	sub, _ := in.Data.Subcommand()
+	name, typed, ok := in.Data.Focused()
+	if !ok || sub != "close" || name != "name" {
+		return nil
+	}
+	return filterSessionChoices(h.st.SnapshotSessions(), typed)
+}
+
+// filterSessionChoices builds the suggestion list: session names containing the
+// typed text (case-insensitive), sorted, capped at Discord's limit.
+func filterSessionChoices(sessions []state.Session, typed string) []dctl.AutocompleteChoice {
+	q := strings.ToLower(strings.TrimSpace(typed))
+	out := make([]dctl.AutocompleteChoice, 0, len(sessions))
+	for _, s := range sessions {
+		if q == "" || strings.Contains(strings.ToLower(s.Name), q) {
+			out = append(out, dctl.AutocompleteChoice{Name: s.Name, Value: s.Name})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	if len(out) > maxAutocompleteChoices {
+		out = out[:maxAutocompleteChoices]
+	}
+	return out
 }
 
 func (h *Handler) handleSet(ctx context.Context, in dctl.Interaction) dctl.Response {

@@ -5,10 +5,17 @@ import (
 	"net/http"
 )
 
+// Interaction type constants we care about (Discord interaction-type field).
+const (
+	InteractionCommand      = 2 // APPLICATION_COMMAND
+	InteractionAutocomplete = 4 // APPLICATION_COMMAND_AUTOCOMPLETE
+)
+
 // Interaction is the subset of a Discord INTERACTION_CREATE we handle
-// (application slash commands, type 2).
+// (application slash commands, type 2; autocomplete requests, type 4).
 type Interaction struct {
 	ID      string          `json:"id"`
+	Type    int             `json:"type"`
 	Token   string          `json:"token"`
 	GuildID string          `json:"guild_id"`
 	Member  Member          `json:"member"`
@@ -27,10 +34,13 @@ type InteractionData struct {
 }
 
 // InteractionOption is one command option; for subcommands, Options nests.
+// Focused is set on the single option the user is currently typing in an
+// autocomplete interaction.
 type InteractionOption struct {
 	Name    string              `json:"name"`
 	Type    int                 `json:"type"`
 	Value   any                 `json:"value"`
+	Focused bool                `json:"focused"`
 	Options []InteractionOption `json:"options"`
 }
 
@@ -79,6 +89,25 @@ func findBool(opts []InteractionOption, name string) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+// Focused returns the name and current (partial) string value of the option the
+// user is typing in an autocomplete interaction, searching nested subcommands.
+func (d InteractionData) Focused() (name, value string, ok bool) {
+	return findFocused(d.Options)
+}
+
+func findFocused(opts []InteractionOption) (string, string, bool) {
+	for _, o := range opts {
+		if o.Focused {
+			s, _ := o.Value.(string)
+			return o.Name, s, true
+		}
+		if n, v, ok := findFocused(o.Options); ok {
+			return n, v, ok
+		}
+	}
+	return "", "", false
 }
 
 // Subcommand returns the name of the first sub-command option, if any.
@@ -155,7 +184,7 @@ func dctlCommands() []map[string]any {
 				{"name": "clone", "description": "Remote repo to clone first (owner/name or URL)", "type": typeStr},
 			}},
 			{"name": "close", "description": "Close a session", "type": typeSub, "options": []map[string]any{
-				{"name": "name", "description": "Session name", "type": typeStr, "required": true},
+				{"name": "name", "description": "Session name", "type": typeStr, "required": true, "autocomplete": true},
 				{"name": "force", "description": "Discard uncommitted worktree changes", "type": typeBool},
 			}},
 			{"name": "list", "description": "List active sessions", "type": typeSub},
@@ -220,6 +249,29 @@ func (c *Client) DeferInteraction(ctx context.Context, id, token string, ephemer
 		data["flags"] = 1 << 6 // EPHEMERAL
 	}
 	body := map[string]any{"type": 5, "data": data}
+	req, err := c.newRequest(ctx, http.MethodPost,
+		"/interactions/"+id+"/"+token+"/callback", body)
+	if err != nil {
+		return err
+	}
+	return c.do(req, nil)
+}
+
+// AutocompleteChoice is one suggestion returned for an autocomplete interaction.
+// Name is shown in the picker; Value is what gets submitted.
+type AutocompleteChoice struct {
+	Name  string
+	Value string
+}
+
+// RespondAutocomplete sends an APPLICATION_COMMAND_AUTOCOMPLETE_RESULT (type 8)
+// reply carrying the suggestion list (Discord caps it at 25; callers must too).
+func (c *Client) RespondAutocomplete(ctx context.Context, id, token string, choices []AutocompleteChoice) error {
+	cs := make([]map[string]any, 0, len(choices))
+	for _, ch := range choices {
+		cs = append(cs, map[string]any{"name": ch.Name, "value": ch.Value})
+	}
+	body := map[string]any{"type": 8, "data": map[string]any{"choices": cs}}
 	req, err := c.newRequest(ctx, http.MethodPost,
 		"/interactions/"+id+"/"+token+"/callback", body)
 	if err != nil {

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -664,6 +665,24 @@ func TestSessionCreateRejectsProjectTraversal(t *testing.T) {
 	}
 }
 
+// acClose builds a /session close autocomplete interaction with `typed` in the
+// focused name option.
+func acClose(user, typed string) dctl.Interaction {
+	in := it(user, "session", "close",
+		dctl.InteractionOption{Name: "name", Type: 3, Value: typed, Focused: true})
+	in.Type = dctl.InteractionAutocomplete
+	return in
+}
+
+func seedSessions(t *testing.T, st *state.State, names ...string) {
+	t.Helper()
+	for _, n := range names {
+		if err := st.AddSession(state.Session{Name: n, ChannelID: "c-" + n, Type: "text"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestSessionCreateLegacyNoWorkspace(t *testing.T) {
 	// No workspace set → legacy behaviour: repo is "" (WorkspaceRoot), still works.
 	h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
@@ -851,5 +870,59 @@ func TestSessionClosePurgesParticipants(t *testing.T) {
 		dctl.InteractionOption{Name: "name", Value: "demo"}))
 	if got := state.ReadParticipants(jp); len(got) != 0 {
 		t.Fatalf("close must purge the participants journal, got %+v", got)
+	}
+}
+
+func TestAutocompleteSuggestsMatchingSessions(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	seedSessions(t, st, "prospector", "payments", "frontend")
+	got := h.Autocomplete(acClose("owner", "p"))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 matches (prospector, payments), got %d: %+v", len(got), got)
+	}
+	// Sorted: payments before prospector.
+	if got[0].Name != "payments" || got[1].Name != "prospector" {
+		t.Fatalf("expected sorted [payments, prospector], got %+v", got)
+	}
+	if got[0].Value != "payments" {
+		t.Fatalf("value should equal name, got %q", got[0].Value)
+	}
+}
+
+func TestAutocompleteEmptyTypedReturnsAll(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	seedSessions(t, st, "a", "b")
+	if got := h.Autocomplete(acClose("owner", "")); len(got) != 2 {
+		t.Fatalf("empty query should list all sessions, got %+v", got)
+	}
+}
+
+func TestAutocompleteDeniesNonAllowlisted(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	seedSessions(t, st, "secret")
+	if got := h.Autocomplete(acClose("intruder", "s")); got != nil {
+		t.Fatalf("non-allowlisted user must get no suggestions, got %+v", got)
+	}
+}
+
+func TestAutocompleteIgnoresOtherSubcommands(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	seedSessions(t, st, "x")
+	// A create-subcommand focused name must NOT be autocompleted.
+	in := it("owner", "session", "create",
+		dctl.InteractionOption{Name: "name", Type: 3, Value: "x", Focused: true})
+	in.Type = dctl.InteractionAutocomplete
+	if got := h.Autocomplete(in); got != nil {
+		t.Fatalf("only close→name is wired, got %+v", got)
+	}
+}
+
+func TestFilterSessionChoicesCapsAt25(t *testing.T) {
+	sessions := make([]state.Session, 30)
+	for i := range sessions {
+		sessions[i] = state.Session{Name: string(rune('a'+i%26)) + fmt.Sprintf("%02d", i)}
+	}
+	if got := filterSessionChoices(sessions, ""); len(got) != maxAutocompleteChoices {
+		t.Fatalf("expected cap at %d, got %d", maxAutocompleteChoices, len(got))
 	}
 }
