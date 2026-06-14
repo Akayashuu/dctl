@@ -354,6 +354,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	if c, ok := in.Data.Opt("cmd"); ok && c != "" {
 		cmd = c
 	}
+	backend, _ := in.Data.Opt("backend") // "" defaults to streaming in the bridge
 	ws := h.st.WorkspaceRoot()
 	project := ""
 	if ws != "" {
@@ -399,7 +400,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			}
 			return errf("create channel: %v", err)
 		}
-		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree, Project: project}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Backend: backend, Worktree: worktree, Project: project}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, title, "Session **"+title+"** started.")
 		if err != nil {
@@ -408,7 +409,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			}
 			return errf("create forum post: %v", err)
 		}
-		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree, Project: project}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Backend: backend, Worktree: worktree, Project: project}
 	default:
 		return errf("home type %q unsupported", home.Type)
 	}

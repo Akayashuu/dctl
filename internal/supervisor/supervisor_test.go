@@ -32,6 +32,24 @@ func TestBridgeArgsIncludeAllowlist(t *testing.T) {
 	}
 }
 
+func TestBridgeArgsIncludeBackend(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: "tmux"})
+	if !strings.Contains(strings.Join(args, " "), "--backend tmux") {
+		t.Fatalf("expected --backend tmux in args: %v", args)
+	}
+}
+
+func TestBridgeArgsNoBackendWhenStream(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	for _, b := range []string{"", "stream"} {
+		args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: b})
+		if strings.Contains(strings.Join(args, " "), "--backend") {
+			t.Fatalf("no --backend expected for backend %q: %v", b, args)
+		}
+	}
+}
+
 func TestBridgeArgsNoAllowlistWhenStatePathEmpty(t *testing.T) {
 	s := NewSupervisor(context.Background(), "/bin/dctl")
 	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1"})
