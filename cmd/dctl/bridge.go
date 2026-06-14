@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"time"
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/bridge"
@@ -34,7 +35,10 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	progress := fs.String("progress", "full", "live activity feedback level: off | actions | full")
 	progressKeep := fs.Bool("progress-keep", false, "keep the full progress list instead of collapsing to a one-line summary")
+	backend := fs.String("backend", "", "responder backend: stream | oneshot | tmux (default derived from --stream)")
+	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
 	fs.Parse(args)
+	_ = tmuxTimeout // parsed for forward-compat; v1 uses the baked-in default
 
 	return bridge.Run(ctx, c, bridge.Options{
 		Channel:      *ch,
@@ -51,9 +55,12 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		Verbose:      *verbose,
 		Progress:     *progress,
 		ProgressKeep: *progressKeep,
+		Backend:      *backend,
 	})
 }
 
 // bridgeOptionsHasParticipants exists so a compile-time test can assert the
 // --participants journal is wired into bridge.Options.
 var bridgeOptionsHasParticipants = bridge.Options{}.Participants
+
+var bridgeOptionsHasBackend = bridge.Options{}.Backend
