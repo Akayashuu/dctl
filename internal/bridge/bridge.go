@@ -193,6 +193,16 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 				continue // unauthorized author → observed but never drives the session
 			}
 			logf(o.Verbose, "<%s> %s", m.Author.Username, oneline(m.Content))
+			// Pull any image attachments down to local files so the backend can
+			// hand them to Claude. Best-effort: a download failure never drops a turn.
+			var atts []string
+			if len(m.Attachments) > 0 {
+				var derr error
+				atts, derr = downloadImages(ctx, nil, m, attachmentDir(o.Session))
+				if derr != nil {
+					logf(o.Verbose, "attachment download error: %v", derr)
+				}
+			}
 			// Acknowledge immediately so the human sees the message was picked
 			// up while the (slow) command runs. Best-effort: ignore if the bot
 			// lacks Add Reactions.
@@ -209,11 +219,15 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			}
 
 			out, err := resp.Respond(ctx, session.DctlMessage{
-				Content:   m.Content,
-				Author:    m.Author.Username,
-				MessageID: m.ID,
-				ChannelID: m.ChannelID,
+				Content:     m.Content,
+				Author:      m.Author.Username,
+				MessageID:   m.ID,
+				ChannelID:   m.ChannelID,
+				Attachments: atts,
 			}, onEvent)
+			// The backend has read the files during the (now-finished) turn, so
+			// they can go. Keeping them would slowly fill the temp dir.
+			removeFiles(atts)
 			if err != nil && out == "" {
 				out = "⚠️ " + err.Error()
 			}
@@ -275,6 +289,9 @@ func postResult(ctx context.Context, c *dctl.Client, ch, replyTo, out string, re
 
 // runCmd executes cmdStr (split on whitespace) with the message text appended
 // as the final argument, piped on stdin, and exposed via DCTL_* env vars.
+// DCTL_ATTACHMENTS lists local image paths joined by the OS path-list separator
+// (':' on Unix), the same convention as $PATH, so a consumer splits it the way
+// it would split $PATH.
 func runCmd(ctx context.Context, cmdStr string, m session.DctlMessage) (string, error) {
 	fields := strings.Fields(cmdStr)
 	args := append(fields[1:], m.Content)
@@ -285,9 +302,18 @@ func runCmd(ctx context.Context, cmdStr string, m session.DctlMessage) (string, 
 		"DCTL_AUTHOR="+m.Author,
 		"DCTL_MESSAGE_ID="+m.MessageID,
 		"DCTL_CHANNEL="+m.ChannelID,
+		"DCTL_ATTACHMENTS="+strings.Join(m.Attachments, string(os.PathListSeparator)),
 	)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// removeFiles best-effort deletes downloaded attachment files once a turn is
+// done, so the per-session temp dir doesn't grow without bound.
+func removeFiles(paths []string) {
+	for _, p := range paths {
+		_ = os.Remove(p)
+	}
 }
 
 func persist(path, id string) {

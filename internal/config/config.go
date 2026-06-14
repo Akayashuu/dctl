@@ -36,6 +36,10 @@ type Config struct {
 	StatusChannel string   `json:"statusChannel"`         // self-updating status embed channel
 	Instance      string   `json:"instance"`              // per-daemon instance slug
 	Owner         string   `json:"owner"`                 // Discord user id seeded into the allowlist
+	// Stale threshold for `session clean`: sessions inactive longer than this
+	// many days are reported as stale. 0 disables stale detection. Unset (zero)
+	// means the built-in default (14) is applied by the caller.
+	SessionMaxIdleDays int `json:"sessionMaxIdleDays,omitempty"`
 
 	// Declarative runtime defaults (precedence: live state.json > this > empty).
 	Home      *HomeRef `json:"home"`      // session home category/forum
@@ -123,6 +127,11 @@ func Template(cmd, healthAddr string) string {
 
   // Discord user id seeded into the allowlist on first run (like DCTL_OWNER_ID).
   "owner": "",
+
+  // "session clean" stale threshold in days: sessions with no message for longer
+  // are reported as stale (acted on only with all:true + stale). 0 disables.
+  // Omit to use the built-in default of 14.
+  // "sessionMaxIdleDays": 14,
 
   // Default session home (category or forum). Uncomment and fill to pin it:
   // "home": { "id": "123456789012345678", "type": "category" },

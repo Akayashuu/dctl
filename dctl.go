@@ -72,11 +72,12 @@ func (c *Client) DefaultChannel() string {
 
 // Message is the subset of a Discord message we surface.
 type Message struct {
-	ID        string `json:"id"`
-	ChannelID string `json:"channel_id"`
-	Content   string `json:"content"`
-	Author    Author `json:"author"`
-	Timestamp string `json:"timestamp"`
+	ID          string       `json:"id"`
+	ChannelID   string       `json:"channel_id"`
+	Content     string       `json:"content"`
+	Author      Author       `json:"author"`
+	Timestamp   string       `json:"timestamp"`
+	Attachments []Attachment `json:"attachments"`
 }
 
 // Author identifies who wrote a message.
@@ -84,6 +85,16 @@ type Author struct {
 	ID       string `json:"id"`
 	Username string `json:"username"`
 	Bot      bool   `json:"bot"`
+}
+
+// Attachment is a file uploaded alongside a Discord message. URL points at the
+// Discord CDN and is fetched directly (not via the API base).
+type Attachment struct {
+	ID          string `json:"id"`
+	Filename    string `json:"filename"`
+	URL         string `json:"url"`
+	ContentType string `json:"content_type"`
+	Size        int    `json:"size"`
 }
 
 // Send posts content to channelID (or the default channel when empty) and
@@ -141,6 +152,26 @@ func (c *Client) Read(ctx context.Context, channelID string, limit int, after st
 		msgs[i], msgs[j] = msgs[j], msgs[i]
 	}
 	return msgs, nil
+}
+
+// LastMessageAt returns the timestamp of the channel's most recent message, or
+// the zero Time if the channel has no messages. It is the inactivity signal for
+// `session clean` (no persistent LastActive is stored on a session). A transport
+// or decode error is returned so callers can stay conservative and NOT treat the
+// session as stale on failure.
+func (c *Client) LastMessageAt(ctx context.Context, channelID string) (time.Time, error) {
+	msgs, err := c.Read(ctx, channelID, 1, "")
+	if err != nil {
+		return time.Time{}, err
+	}
+	if len(msgs) == 0 {
+		return time.Time{}, nil
+	}
+	ts, err := time.Parse(time.RFC3339, msgs[len(msgs)-1].Timestamp)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parse message timestamp %q: %w", msgs[len(msgs)-1].Timestamp, err)
+	}
+	return ts, nil
 }
 
 // noMentions disables Discord mention parsing for an outbound message body. Bot
