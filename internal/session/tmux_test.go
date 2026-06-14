@@ -3,10 +3,26 @@ package session
 import (
 	"context"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestTmuxResponderIntegration(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
+	}
+	r := newTmuxResponder("dctl-test-"+t.Name(), "", []string{"bash", "--norc"}, "", 10*time.Second)
+	defer r.Close()
+	out, err := r.Respond(context.Background(), DctlMessage{Content: "echo hi"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "hi") {
+		t.Fatalf("expected output to contain %q, got %q", "hi", out)
+	}
+}
 
 func TestNewLines(t *testing.T) {
 	before := "banner\n> \n"
