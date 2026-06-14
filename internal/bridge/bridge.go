@@ -49,11 +49,27 @@ type Options struct {
 	TmuxTimeout  time.Duration // tmux backend: max wait for a turn to settle (0 = default)
 }
 
+// resolveBackend picks the responder backend. An explicit backend always wins.
+// When unset, the default is tmux (interactive claude TUI); --stream is legacy
+// and only consulted here, where --stream=false selects the one-shot backend.
+func resolveBackend(backend string, stream bool) string {
+	if backend != "" {
+		return backend
+	}
+	if stream {
+		return "tmux"
+	}
+	return "oneshot"
+}
+
 // Run links the channel to the command until ctx is cancelled.
 // Body lifted verbatim from the old runBridge minus flag parsing.
 func Run(ctx context.Context, c *dctl.Client, o Options) error {
-	if !o.Stream && strings.TrimSpace(o.Cmd) == "" {
-		return fmt.Errorf("usage: dctl bridge --cmd '<command>' --stream=false [-c CHANNEL] [-i 5] [--state FILE]")
+	backend := resolveBackend(o.Backend, o.Stream)
+	// Only the one-shot backend needs an explicit --cmd (it has no built-in
+	// program). stream/tmux default to launching claude, so they run cmd-less.
+	if backend == "oneshot" && strings.TrimSpace(o.Cmd) == "" {
+		return fmt.Errorf("usage: dctl bridge --backend oneshot --cmd '<command>' [-c CHANNEL] [-i 5] [--state FILE]")
 	}
 	if !c.Enabled() {
 		return dctl.ErrDisabled
@@ -100,14 +116,6 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 	logf(o.Verbose, "bridge up: cmd=%q stream=%v model=%q interval=%ds last=%s", o.Cmd, o.Stream, o.Model, o.Interval, last)
 
-	backend := o.Backend
-	if backend == "" {
-		if o.Stream {
-			backend = "stream"
-		} else {
-			backend = "oneshot"
-		}
-	}
 	oneShot := func(ctx context.Context, mm session.DctlMessage) (string, error) {
 		return runCmd(ctx, o.Cmd, mm)
 	}

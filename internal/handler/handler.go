@@ -354,7 +354,10 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	if c, ok := in.Data.Opt("cmd"); ok && c != "" {
 		cmd = c
 	}
-	backend, _ := in.Data.Opt("backend") // "" defaults to streaming in the bridge
+	backend, _ := in.Data.Opt("backend")
+	if backend == "" {
+		backend = "tmux" // default backend: interactive claude TUI
+	}
 	ws := h.st.WorkspaceRoot()
 	project := ""
 	if ws != "" {

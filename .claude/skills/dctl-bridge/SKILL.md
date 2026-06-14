@@ -38,7 +38,7 @@ session per message.
 | `--state FILE` | — | Persist last-seen id. **Authoritative**: a restart resumes exactly here and never replays handled messages. Always pass it. |
 | `--after ID` | — | Seeds the start id for the **first run only** (ignored once `--state` exists). |
 | `-v` | off | Log activity to stderr. |
-| `--backend stream\|oneshot\|tmux` | derived from `--stream` | Responder strategy (see below). |
+| `--backend tmux\|stream\|oneshot` | `tmux` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
 | `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
 
 Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
@@ -48,11 +48,11 @@ Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 
 The bridge can talk to Claude three ways:
 
-- **`stream`** (default) — one persistent `claude -p` **stream-json** process.
+- **`stream`** — one persistent `claude -p` **stream-json** process.
   Structured, token-frugal, context stays hot. Permission prompts are not
-  interactive (Claude runs pre-approved).
+  interactive (Claude runs pre-approved). Select with `--backend stream`.
 - **`oneshot`** — runs `--cmd` fresh per message (arbitrary non-Claude commands).
-- **`tmux`** — drives the **interactive `claude` TUI** inside a tmux session and
+- **`tmux`** (**default**) — drives the **interactive `claude` TUI** inside a tmux session and
   relays its **text** back (no screenshots/ANSI). One persistent `claude` per
   channel (`tmux send-keys` in, `capture-pane` out, diffed and chrome-stripped).
   Launched with `--dangerously-skip-permissions`, so there are no permission

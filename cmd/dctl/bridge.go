@@ -23,7 +23,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ExitOnError)
 	ch := channelFlag(fs)
 	cmdStr := fs.String("cmd", "", "base command (default 'claude' in stream mode; the per-message program in one-shot mode)")
-	stream := fs.Bool("stream", true, "keep one persistent claude stream-json process per session (false = one-shot per message)")
+	stream := fs.Bool("stream", true, "legacy: only consulted when --backend is unset; --stream=false selects the one-shot backend")
 	model := fs.String("model", "", "model for the persistent claude session (e.g. claude-haiku-4-5-20251001)")
 	ensure := fs.String("ensure", "prospector", "if no channel is set, create/reuse a channel with this name")
 	interval := fs.Int("i", 5, "poll interval in seconds")
@@ -35,7 +35,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	progress := fs.String("progress", "full", "live activity feedback level: off | actions | full")
 	progressKeep := fs.Bool("progress-keep", false, "keep the full progress list instead of collapsing to a one-line summary")
-	backend := fs.String("backend", "", "responder backend: stream | oneshot | tmux (default derived from --stream)")
+	backend := fs.String("backend", "", "responder backend: tmux (default) | stream | oneshot")
 	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
 	fs.Parse(args)
 
