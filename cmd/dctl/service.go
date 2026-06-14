@@ -99,6 +99,14 @@ func runServiceUpdate(ctx context.Context, cfg service.Config, args []string) er
 	if fs.NArg() > 0 {
 		return fmt.Errorf("dctl service update: unexpected argument %q", fs.Arg(0))
 	}
+	// cfg.BinPath is os.Executable() — the binary running this command. If that
+	// isn't the binary the installed service runs (e.g. invoked from a build
+	// dir), rebuild the installed one instead, so the update isn't a silent
+	// no-op on the daemon.
+	if installed, ok := service.InstalledBinPath(cfg); ok && installed != cfg.BinPath {
+		fmt.Fprintf(os.Stderr, "dctl service: rebuilding the installed binary %s (you ran %s)\n", installed, cfg.BinPath)
+		cfg.BinPath = installed
+	}
 	if err := service.Update(ctx, cfg, *source, !*noPull); err != nil {
 		return err
 	}

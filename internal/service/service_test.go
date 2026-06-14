@@ -237,6 +237,49 @@ func TestDefaultCmdBakedIntoUnit(t *testing.T) {
 	}
 }
 
+func TestInstalledBinPathReadsUnit(t *testing.T) {
+	home := t.TempDir()
+	c := testConfig("linux")
+	c.Home = home
+	c.BinPath = "/opt/dctl/dctl"
+	unitDir := home + "/.config/systemd/user"
+	if err := os.MkdirAll(unitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Write a real unit via the install plan so the parse matches what we emit.
+	p, err := BuildPlan(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(unitDir+"/dctl.service", []byte(p.Files[0].Content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := InstalledBinPath(c)
+	if !ok || got != "/opt/dctl/dctl" {
+		t.Fatalf("InstalledBinPath = %q, %v; want /opt/dctl/dctl, true", got, ok)
+	}
+	// Absent unit (fresh home) → not found, not a panic.
+	c2 := testConfig("linux")
+	c2.Home = t.TempDir()
+	if _, ok := InstalledBinPath(c2); ok {
+		t.Fatal("expected no bin path when unit is absent")
+	}
+}
+
+func TestFirstToken(t *testing.T) {
+	cases := map[string]string{
+		"/usr/bin/dctl serve --x y": "/usr/bin/dctl",
+		`"/has space/dctl" serve`:   "/has space/dctl",
+		"/lone/dctl":                "/lone/dctl",
+		"":                          "",
+	}
+	for in, want := range cases {
+		if got := firstToken(in); got != want {
+			t.Errorf("firstToken(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestUninstallAndStatus(t *testing.T) {
 	for _, os := range []string{"linux", "darwin", "windows"} {
 		if _, err := BuildUninstall(testConfig(os)); err != nil {

@@ -278,6 +278,51 @@ func Smoke(ctx context.Context, binPath string) error {
 	return nil
 }
 
+// InstalledBinPath returns the binary path baked into the installed service
+// unit's ExecStart, so `service update` rebuilds the binary the service actually
+// runs — not whatever binary happened to invoke the CLI (running it from a build
+// dir would otherwise rebuild that throwaway binary and leave the daemon stale).
+// Returns ("", false) when it can't be determined: unit absent, or an OS whose
+// launcher this doesn't parse (only the linux systemd unit is read).
+func InstalledBinPath(c Config) (string, bool) {
+	if goos(c) != "linux" {
+		return "", false
+	}
+	data, err := os.ReadFile(filepath.Join(c.Home, ".config", "systemd", "user", linuxUnitName))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ExecStart=")
+		if !ok {
+			continue
+		}
+		if bin := firstToken(rest); bin != "" {
+			return bin, true
+		}
+	}
+	return "", false
+}
+
+// firstToken returns the first whitespace-separated token of s, honoring a
+// leading double-quote (the unit builder quotes a space-bearing BinPath).
+func firstToken(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if s[0] == '"' {
+		if i := strings.IndexByte(s[1:], '"'); i >= 0 {
+			return s[1 : 1+i]
+		}
+		return s[1:]
+	}
+	if i := strings.IndexByte(s, ' '); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // Update pulls (optional), rebuilds, smoke-tests, and restarts the service
 // inline. Used by the `dctl service update` CLI (a separate process from the
 // daemon).
