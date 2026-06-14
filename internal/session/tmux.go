@@ -177,17 +177,26 @@ func newTmuxResponder(sessName, dir string, base []string, model string, timeout
 	return &tmuxResponder{sessName: sessName, dir: dir, cmd: cmd, timeout: timeout}
 }
 
+// tmuxRun runs a tmux command without cancellation — used for best-effort
+// teardown (Close) where there is no caller context to honor.
 func tmuxRun(args ...string) (string, error) {
 	out, err := exec.Command("tmux", args...).CombinedOutput()
 	return string(out), err
 }
 
-func (t *tmuxResponder) capture() (string, error) {
-	return tmuxRun("capture-pane", "-p", "-S", "-", "-t", t.sessName)
+// tmuxRunCtx runs a tmux command bound to ctx so a cancelled turn doesn't leave
+// a send-keys/capture blocking past the caller's deadline.
+func tmuxRunCtx(ctx context.Context, args ...string) (string, error) {
+	out, err := exec.CommandContext(ctx, "tmux", args...).CombinedOutput()
+	return string(out), err
+}
+
+func (t *tmuxResponder) capture(ctx context.Context) (string, error) {
+	return tmuxRunCtx(ctx, "capture-pane", "-p", "-S", "-", "-t", t.sessName)
 }
 
 func (t *tmuxResponder) capturePoll(ctx context.Context) (string, error) {
-	return awaitQuiescence(ctx, t.capture, quiesceCfg{
+	return awaitQuiescence(ctx, func() (string, error) { return t.capture(ctx) }, quiesceCfg{
 		stable:  3,
 		poll:    300 * time.Millisecond,
 		timeout: t.timeout,
@@ -199,15 +208,31 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return fmt.Errorf("tmux not found on PATH: %w", err)
 	}
+	// A leftover session from a previous crash would make new-session fail with
+	// "duplicate session". Best-effort kill any stale namesake first so we always
+	// start from a clean, freshly-launched pane.
+	_, _ = tmuxRun("kill-session", "-t", t.sessName)
+
+	// Pin the working directory explicitly. new-session without -c inherits the
+	// tmux *server* cwd (a long-lived daemon that may already run elsewhere), not
+	// this process's, so an empty dir is resolved to our own cwd here.
+	dir := t.dir
+	if dir == "" {
+		if wd, err := os.Getwd(); err == nil {
+			dir = wd
+		}
+	}
 	args := []string{"new-session", "-d", "-s", t.sessName, "-x", "200", "-y", "50"}
-	if t.dir != "" {
-		args = append(args, "-c", t.dir)
+	if dir != "" {
+		args = append(args, "-c", dir)
 	}
 	args = append(args, strings.Join(t.cmd, " "))
-	if out, err := tmuxRun(args...); err != nil {
+	if out, err := tmuxRunCtx(ctx, args...); err != nil {
 		return fmt.Errorf("tmux new-session: %v: %s", err, out)
 	}
-	// Wait for the TUI to finish drawing its first prompt before we type.
+	// Wait for the TUI to finish drawing its first prompt before we type. On
+	// failure the pane is left for Close (or the next start's stale-kill) to reap;
+	// started stays false so we never type against an unsettled baseline.
 	settled, err := t.capturePoll(ctx)
 	if err != nil {
 		return err
@@ -237,10 +262,10 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 	// read as Enter, which would submit the message early and desync the turn.
 	// A single coherent line is the v1 contract (see SKILL.md known limitation).
 	text := sanitizeInput(m.Content)
-	if out, err := tmuxRun(sendLiteralArgs(t.sessName, text)...); err != nil {
+	if out, err := tmuxRunCtx(ctx, sendLiteralArgs(t.sessName, text)...); err != nil {
 		return "", fmt.Errorf("tmux send-keys: %v: %s", err, out)
 	}
-	if out, err := tmuxRun("send-keys", "-t", t.sessName, "Enter"); err != nil {
+	if out, err := tmuxRunCtx(ctx, "send-keys", "-t", t.sessName, "Enter"); err != nil {
 		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
 	}
 	after, err := t.capturePoll(ctx)
@@ -276,19 +301,33 @@ func sanitizeInput(s string) string {
 func (t *tmuxResponder) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.started {
-		_, _ = tmuxRun("kill-session", "-t", t.sessName)
-		t.started = false
-	}
+	// Best-effort and unconditional: kill the namesake even if start() failed
+	// after new-session (settled poll errored) so a half-started pane is never
+	// leaked. A no-op when nothing is there.
+	_, _ = tmuxRun("kill-session", "-t", t.sessName)
+	t.started = false
 	return nil
 }
 
 // tmuxSessionName derives a collision-safe tmux session name from the channel,
-// namespaced by DCTL_INSTANCE_ID (same scheme as session worktrees).
+// namespaced by DCTL_INSTANCE_ID (same scheme as session worktrees). tmux forbids
+// "." and ":" in session names (and trims whitespace), so they are folded to "-".
 func tmuxSessionName(channel string) string {
-	inst := os.Getenv("DCTL_INSTANCE_ID")
-	if inst == "" {
-		return "dctl-" + channel
+	name := "dctl-" + channel
+	if inst := os.Getenv("DCTL_INSTANCE_ID"); inst != "" {
+		name = "dctl-" + inst + "-" + channel
 	}
-	return "dctl-" + inst + "-" + channel
+	return sanitizeSessionName(name)
+}
+
+// sanitizeSessionName folds characters tmux rejects in a session name ("." and
+// ":") and any whitespace into "-", keeping the name addressable by -t.
+func sanitizeSessionName(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '.', ':', ' ', '\t', '\n':
+			return '-'
+		}
+		return r
+	}, s)
 }

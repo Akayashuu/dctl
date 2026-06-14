@@ -66,6 +66,20 @@ The bridge can talk to Claude three ways:
 From the daemon: `/session create name:foo backend:tmux` creates a tmux-backed
 session; the backend is persisted, so a daemon restart respawns it the same way.
 
+### Security (read before exposing tmux)
+
+- **The allowlist is the only gate.** With `--dangerously-skip-permissions`, every
+  message from an *allowed* author becomes a command Claude runs unprompted. Always
+  deploy the tmux backend with `--allow-state` on a **dedicated control channel** —
+  never an open channel.
+- **The tmux backend runs `--cmd` through a shell.** `tmux new-session` execs the
+  command string via `/bin/sh -c`, so shell metacharacters in `--cmd` are
+  interpreted (the `stream`/`oneshot` backends exec an explicit argv with no shell).
+  Treat `--cmd` as trusted operator input and don't build it from untrusted text.
+- The pane working directory is pinned explicitly (the tmux *server* is a daemon
+  whose cwd may differ from the bridge's); a stale namesake session is killed before
+  a fresh one starts.
+
 ## Feedback while it works
 
 The command is slow (a Claude run takes tens of seconds), so the bridge reacts to

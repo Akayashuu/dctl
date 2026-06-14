@@ -34,6 +34,16 @@ func TestSendLiteralArgsTerminatesOptions(t *testing.T) {
 	}
 }
 
+func TestSanitizeSessionName(t *testing.T) {
+	// tmux rejects "." and ":" and trims whitespace; all must fold to "-".
+	if got := sanitizeSessionName("dctl-inst.1:2 3"); got != "dctl-inst-1-2-3" {
+		t.Fatalf("sanitizeSessionName = %q, want %q", got, "dctl-inst-1-2-3")
+	}
+	if got := sanitizeSessionName("dctl-123456"); got != "dctl-123456" {
+		t.Fatalf("sanitizeSessionName altered a clean name: %q", got)
+	}
+}
+
 func TestStripChromeKeepsBlockquoteProse(t *testing.T) {
 	// A bare ">" prompt is chrome; "> quoted" is Claude prose and must survive.
 	in := []string{">", "> a markdown quote", "plain line"}
