@@ -24,6 +24,24 @@ const maxAutocompleteChoices = 25
 // forge odd refs even though the caller is allowlisted.
 var sessionNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$`)
 
+// slugInvalidRe matches any run of characters that are not allowed inside a
+// session slug; slugify collapses each such run to a single '-'.
+var slugInvalidRe = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// slugify turns a free-form session name into a safe slug: lowercase, runs of
+// invalid characters (spaces, punctuation, …) collapse to '-', and leading or
+// trailing separators are trimmed. It returns "" when nothing usable remains
+// (e.g. an all-emoji name), letting the caller emit a clear error. The result
+// is always accepted by sessionNameRe, which stays as the final guard.
+func slugify(name string) string {
+	s := slugInvalidRe.ReplaceAllString(strings.ToLower(strings.TrimSpace(name)), "-")
+	s = strings.Trim(s, "-_")
+	if len(s) > 64 {
+		s = strings.Trim(s[:64], "-_")
+	}
+	return s
+}
+
 // projectRe constrains a workspace project name to a single safe path segment
 // (no "/", no "..", no spaces), so workspace+project cannot escape the root.
 var projectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -34,6 +52,10 @@ var projectRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 const (
 	cloneTimeout = 10 * time.Minute
 	listTimeout  = 30 * time.Second
+	// acTimeout bounds the work behind an autocomplete suggestion: Discord drops
+	// the response if it doesn't arrive within ~3s, so forge listing for clone:
+	// suggestions runs best-effort under a tight ceiling.
+	acTimeout = 2500 * time.Millisecond
 )
 
 // repoFor resolves the git repo root a session operates on: the workspace root
@@ -76,12 +98,22 @@ type forges interface {
 	Clone(ctx context.Context, spec, workspace string) (projectDir string, err error)
 }
 
+// updater rebuilds the daemon from source and restarts its service. Build pulls
+// (when pull is true) and recompiles, returning the new short version; Restart
+// restarts the running service out-of-band so it survives the daemon being
+// killed mid-restart. Both are injected so routing stays testable.
+type updater interface {
+	Build(ctx context.Context, pull bool) (version string, err error)
+	Restart(ctx context.Context) error
+}
+
 // Handler routes slash-command interactions to actions.
 type Handler struct {
 	d          discord
 	sup        supervisor
 	wt         worktrees
 	fg         forges
+	up         updater
 	st         *state.State
 	defaultCmd string
 	partDir    string // dir holding participants/<name>.log journals
@@ -91,8 +123,8 @@ type Handler struct {
 // session is created without an explicit cmd (e.g. "claude -p --continue").
 // partDir is the directory under which per-session participant journals live
 // (participants/<name>.log).
-func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, st *state.State, defaultCmd, partDir string) *Handler {
-	return &Handler{d: d, sup: sup, wt: wt, fg: fg, st: st, defaultCmd: defaultCmd, partDir: partDir}
+func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, up updater, st *state.State, defaultCmd, partDir string) *Handler {
+	return &Handler{d: d, sup: sup, wt: wt, fg: fg, up: up, st: st, defaultCmd: defaultCmd, partDir: partDir}
 }
 
 // PartDir returns the participants journal directory (used by tests/wiring).
@@ -141,6 +173,10 @@ func (h *Handler) Slow(in dctl.Interaction) bool {
 	case "workspace":
 		sub, _ := in.Data.Subcommand()
 		return sub == "remotes"
+	case "service":
+		// update rebuilds (git + go build); restart schedules an out-of-band
+		// restart. Both ack first, then reply once the work is done/queued.
+		return true
 	}
 	return false
 }
@@ -157,30 +193,13 @@ func (h *Handler) Handle(ctx context.Context, in dctl.Interaction) dctl.Response
 		return h.handleSession(ctx, in)
 	case "workspace":
 		return h.handleWorkspace(ctx, in)
+	case "service":
+		return h.handleService(ctx, in)
 	case "allow":
 		return h.handleAllow(ctx, in)
 	default:
 		return errf("unknown command %q", in.Data.Name)
 	}
-}
-
-// Autocomplete answers an autocomplete interaction. Only the /session close
-// "name" option is wired: it suggests live session names matching what the user
-// has typed. Any other focused option (or a non-allowlisted user) yields no
-// suggestions, so session names never leak.
-func (h *Handler) Autocomplete(in dctl.Interaction) []dctl.AutocompleteChoice {
-	if !h.st.Allowed(in.Member.User.ID) {
-		return nil
-	}
-	if in.Data.Name != "session" {
-		return nil
-	}
-	sub, _ := in.Data.Subcommand()
-	name, typed, ok := in.Data.Focused()
-	if !ok || sub != "close" || name != "name" {
-		return nil
-	}
-	return filterSessionChoices(h.st.SnapshotSessions(), typed)
 }
 
 // filterSessionChoices builds the suggestion list: session names containing the
@@ -207,6 +226,8 @@ func (h *Handler) handleSet(ctx context.Context, in dctl.Interaction) dctl.Respo
 		return h.setHome(ctx, in)
 	case "workspace":
 		return h.setWorkspace(in)
+	case "source":
+		return h.setSource(in)
 	default:
 		return errf("unknown /set subcommand")
 	}
@@ -260,6 +281,38 @@ func (h *Handler) setWorkspace(in dctl.Interaction) dctl.Response {
 	return dctl.Response{Content: fmt.Sprintf("📂 Workspace set to `%s`.", abs), Ephemeral: true}
 }
 
+// setSource records the dctl source checkout that /service update builds from.
+func (h *Handler) setSource(in dctl.Interaction) dctl.Response {
+	p, ok := in.Data.Opt("path")
+	if !ok || p == "" {
+		return errf("missing path")
+	}
+	if strings.HasPrefix(p, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return errf("bad path: %v", err)
+	}
+	if info, err := os.Stat(abs); err != nil || !info.IsDir() {
+		return errf("not a directory: %s", abs)
+	}
+	// A dctl checkout has go.mod at its root and cmd/dctl/; reject anything else
+	// so a later /service update never runs `go build` in an unrelated tree.
+	if fi, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil || fi.IsDir() {
+		return errf("not a dctl source checkout (no go.mod): %s", abs)
+	}
+	if fi, err := os.Stat(filepath.Join(abs, "cmd", "dctl")); err != nil || !fi.IsDir() {
+		return errf("not a dctl source checkout (no cmd/dctl): %s", abs)
+	}
+	if err := h.st.SetSource(abs); err != nil {
+		return errf("save failed: %v", err)
+	}
+	return dctl.Response{Content: fmt.Sprintf("🛠️ Source set to `%s`.", abs), Ephemeral: true}
+}
+
 func (h *Handler) handleSession(ctx context.Context, in dctl.Interaction) dctl.Response {
 	// The "allow" sub-command group is type 2, which Subcommand() (type-1 only)
 	// does not surface; detect it explicitly.
@@ -282,12 +335,13 @@ func (h *Handler) handleSession(ctx context.Context, in dctl.Interaction) dctl.R
 }
 
 func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.Response {
-	name, ok := in.Data.Opt("name")
+	raw, ok := in.Data.Opt("name")
 	if !ok {
 		return errf("missing name")
 	}
-	if !sessionNameRe.MatchString(name) {
-		return errf("invalid name %q — use letters, digits, - or _ (max 64, no /, spaces or ..)", name)
+	name := slugify(raw)
+	if name == "" || !sessionNameRe.MatchString(name) {
+		return errf("invalid name %q — use letters, digits, - or _ (max 64, no /, spaces or ..)", raw)
 	}
 	if _, exists := h.st.FindSession(name); exists {
 		return errf("session %q already exists", name)
@@ -368,6 +422,109 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	_, _ = h.d.Send(ctx, sess.ChannelID, banner) // best-effort; reply is source of truth
 	reply := fmt.Sprintf("✅ Running on <#%s>.\n\n%s", sess.ChannelID, banner)
 	return dctl.Response{Content: reply, Ephemeral: true}
+}
+
+// Autocomplete answers a Discord autocomplete request (interaction type 4) for
+// /session. On create it suggests the focused option (project, clone, cmd); on
+// close it suggests live session names. An unknown option, a non-allowlisted
+// user, or any failure yields no suggestions (Discord then shows free text), so
+// project/session names never leak to non-allowlisted members.
+func (h *Handler) Autocomplete(ctx context.Context, in dctl.Interaction) []dctl.AutocompleteChoice {
+	// Same gate as Handle: autocomplete would otherwise leak workspace project
+	// names / remote repos and spawn gh/glab for any guild member.
+	if !h.st.Allowed(in.Member.User.ID) {
+		return nil
+	}
+	if in.Data.Name != "session" {
+		return nil
+	}
+	sub, _ := in.Data.Subcommand()
+	field, partial, ok := in.Data.Focused()
+	if !ok {
+		return nil
+	}
+	switch {
+	case sub == "create" && field == "project":
+		return filterChoices(h.localProjects(), partial)
+	case sub == "create" && field == "clone":
+		return h.cloneChoices(ctx, partial)
+	case sub == "create" && field == "cmd":
+		return filterChoices(h.cmdSuggestions(), partial)
+	case sub == "close" && field == "name":
+		return filterSessionChoices(h.st.SnapshotSessions(), partial)
+	default:
+		return nil
+	}
+}
+
+// localProjects lists the names of git projects in the workspace root.
+func (h *Handler) localProjects() []string {
+	ws := h.st.WorkspaceRoot()
+	if ws == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(ws)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(ws, e.Name(), ".git")); err != nil {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+// cmdSuggestions offers the default bridged command as a starting point.
+func (h *Handler) cmdSuggestions() []string {
+	if h.defaultCmd == "" {
+		return nil
+	}
+	return []string{h.defaultCmd}
+}
+
+// cloneChoices lists remote repos (owner/name) under a tight timeout so the
+// autocomplete response beats Discord's deadline; failures yield no suggestions.
+func (h *Handler) cloneChoices(ctx context.Context, partial string) []dctl.AutocompleteChoice {
+	cctx, cancel := context.WithTimeout(ctx, acTimeout)
+	defer cancel()
+	repos, err := h.fg.List(cctx)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(repos))
+	for _, r := range repos {
+		names = append(names, r.FullName)
+	}
+	return filterChoices(names, partial)
+}
+
+// filterChoices keeps values whose lowercased form contains the lowercased
+// partial (case-insensitive substring), capped at the Discord 25-choice limit.
+func filterChoices(values []string, partial string) []dctl.AutocompleteChoice {
+	p := strings.ToLower(partial)
+	out := make([]dctl.AutocompleteChoice, 0, len(values))
+	for _, v := range values {
+		// Discord rejects the whole response if any choice name/value exceeds 100
+		// chars; the value is used verbatim (e.g. clone spec), so skip rather than
+		// truncate into something invalid.
+		if len(v) > 100 {
+			continue
+		}
+		if p != "" && !strings.Contains(strings.ToLower(v), p) {
+			continue
+		}
+		out = append(out, dctl.AutocompleteChoice{Name: v, Value: v})
+		if len(out) == maxAutocompleteChoices {
+			break
+		}
+	}
+	return out
 }
 
 func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Response {
@@ -506,6 +663,40 @@ func normalizeUserID(s string) string {
 	return s
 }
 
+// handleService routes /service restart|update. Both run on the deferred path
+// (see Slow): update rebuilds from source, restart only restarts. The restart
+// is scheduled out-of-band by the updater, so the daemon can answer the
+// interaction before it is replaced.
+func (h *Handler) handleService(ctx context.Context, in dctl.Interaction) dctl.Response {
+	if h.up == nil {
+		return errf("service control unavailable")
+	}
+	sub, _ := in.Data.Subcommand()
+	switch sub {
+	case "restart":
+		if err := h.up.Restart(ctx); err != nil {
+			return errf("restart: %v", err)
+		}
+		return dctl.Response{Content: "🔄 Restarting the daemon…", Ephemeral: true}
+	case "update":
+		pull := !in.Data.OptBool("no_pull")
+		version, err := h.up.Build(ctx, pull)
+		if err != nil {
+			return errf("update: %v", err)
+		}
+		if err := h.up.Restart(ctx); err != nil {
+			return errf("rebuilt %s but restart failed: %v", version, err)
+		}
+		v := version
+		if v == "" {
+			v = "(unknown)"
+		}
+		return dctl.Response{Content: fmt.Sprintf("✅ Rebuilt `%s`, restarting the daemon…", v), Ephemeral: true}
+	default:
+		return errf("unknown /service subcommand")
+	}
+}
+
 func (h *Handler) handleWorkspace(ctx context.Context, in dctl.Interaction) dctl.Response {
 	sub, _ := in.Data.Subcommand()
 	switch sub {
@@ -519,28 +710,16 @@ func (h *Handler) handleWorkspace(ctx context.Context, in dctl.Interaction) dctl
 }
 
 func (h *Handler) workspaceList() dctl.Response {
-	ws := h.st.WorkspaceRoot()
-	if ws == "" {
+	if h.st.WorkspaceRoot() == "" {
 		return errf("no workspace set — run /set workspace first")
 	}
-	entries, err := os.ReadDir(ws)
-	if err != nil {
-		return errf("read workspace: %v", err)
+	names := h.localProjects()
+	if len(names) == 0 {
+		return dctl.Response{Content: "No git projects in workspace.", Ephemeral: true}
 	}
 	out := "Projects:\n"
-	n := 0
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(ws, e.Name(), ".git")); err != nil {
-			continue
-		}
-		out += "• " + e.Name() + "\n"
-		n++
-	}
-	if n == 0 {
-		out = "No git projects in workspace."
+	for _, n := range names {
+		out += "• " + n + "\n"
 	}
 	return dctl.Response{Content: out, Ephemeral: true}
 }

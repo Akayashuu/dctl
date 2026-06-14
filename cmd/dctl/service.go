@@ -14,20 +14,33 @@ import (
 // boot-started service (systemd user unit on Linux, launchd LaunchAgent on
 // macOS, Task Scheduler task on Windows).
 func runService(ctx context.Context, args []string) error {
-	const usage = "usage: dctl service <install|uninstall|status> [--health-addr ADDR] [--env-file PATH]"
+	const usage = "usage: dctl service <install|uninstall|status|restart|update> [--health-addr ADDR] [--env-file PATH] [--source DIR] [--no-pull]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
 	sub := args[0]
 	switch sub {
-	case "install", "uninstall", "status":
+	case "install", "uninstall", "status", "restart", "update":
 	default:
-		return fmt.Errorf("dctl service: unknown subcommand %q (want install|uninstall|status)", sub)
+		return fmt.Errorf("dctl service: unknown subcommand %q (want install|uninstall|status|restart|update)", sub)
 	}
 
 	cfg, err := service.DefaultConfig()
 	if err != nil {
 		return err
+	}
+
+	// restart/update are operational (no install planning); handle them up front
+	// before the install-oriented flag parsing below.
+	switch sub {
+	case "restart":
+		if err := service.Restart(ctx, cfg); err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "dctl service: restarted")
+		return nil
+	case "update":
+		return runServiceUpdate(ctx, cfg, args[1:])
 	}
 
 	fs := flag.NewFlagSet("service", flag.ContinueOnError)
@@ -58,4 +71,27 @@ func runService(ctx context.Context, args []string) error {
 	default:
 		return fmt.Errorf("dctl service: unknown subcommand %q (want install|uninstall|status)", sub)
 	}
+}
+
+// runServiceUpdate handles `dctl service update [--source DIR] [--no-pull]`:
+// (git pull +) rebuild the binary from source, then restart the service. The
+// source defaults to the current directory — the natural spot to run it right
+// after a local merge.
+func runServiceUpdate(ctx context.Context, cfg service.Config, args []string) error {
+	cwd, _ := os.Getwd()
+	fs := flag.NewFlagSet("service update", flag.ContinueOnError)
+	source := fs.String("source", cwd, "path to the dctl source checkout to build from")
+	noPull := fs.Bool("no-pull", false, "skip `git pull --ff-only` before building")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("dctl service update: unexpected argument %q", fs.Arg(0))
+	}
+	if err := service.Update(ctx, cfg, *source, !*noPull); err != nil {
+		return err
+	}
+	v := service.SourceVersion(ctx, *source)
+	fmt.Fprintf(os.Stderr, "dctl service: rebuilt %s and restarted\n", v)
+	return nil
 }

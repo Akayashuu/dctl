@@ -503,3 +503,69 @@ func TestWriteFileAppliesMode(t *testing.T) {
 		t.Errorf("env file mode = %o, want 600", info.Mode().Perm())
 	}
 }
+
+func TestRestartCommandsPerOS(t *testing.T) {
+	for _, tc := range []struct {
+		goos string
+		want string // substring expected in the (last) restart command
+	}{
+		{"linux", "systemctl --user restart dctl.service"},
+		{"darwin", "launchctl kickstart -k"},
+		{"windows", "schtasks /run /tn dctl"},
+	} {
+		cmds, err := RestartCommands(testConfig(tc.goos))
+		if err != nil {
+			t.Fatalf("%s: %v", tc.goos, err)
+		}
+		joined := strings.Join(cmds[len(cmds)-1].Argv, " ")
+		if !strings.Contains(joined, tc.want) {
+			t.Fatalf("%s: want %q in %q", tc.goos, tc.want, joined)
+		}
+	}
+	if _, err := RestartCommands(testConfig("plan9")); err == nil {
+		t.Fatal("expected error for unsupported OS")
+	}
+}
+
+func TestValidateSource(t *testing.T) {
+	if err := validateSource(""); err == nil {
+		t.Fatal("empty source must fail")
+	}
+	bare := t.TempDir()
+	if err := validateSource(bare); err == nil {
+		t.Fatal("dir without go.mod must fail")
+	}
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSource(src); err == nil {
+		t.Fatal("dir without cmd/dctl must fail")
+	}
+	if err := os.MkdirAll(filepath.Join(src, "cmd", "dctl"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSource(src); err != nil {
+		t.Fatalf("valid checkout rejected: %v", err)
+	}
+}
+
+func TestBuildRejectsNonSource(t *testing.T) {
+	if err := Build(context.Background(), t.TempDir(), "/tmp/out"); err == nil {
+		t.Fatal("Build must reject a non-checkout before invoking go")
+	}
+}
+
+func TestSmokeRejectsBrokenBinary(t *testing.T) {
+	if err := Smoke(context.Background(), ""); err == nil {
+		t.Fatal("Smoke must reject an empty binary path")
+	}
+	// A binary that exits non-zero on --help must fail the smoke test.
+	if err := Smoke(context.Background(), "/usr/bin/false"); err == nil {
+		t.Fatal("Smoke must reject a binary that exits non-zero")
+	}
+	// A binary that exits 0 passes (true ignores --help and exits 0).
+	if err := Smoke(context.Background(), "/bin/true"); err != nil {
+		t.Skipf("smoke baseline unavailable: %v", err)
+	}
+}

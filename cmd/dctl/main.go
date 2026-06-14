@@ -205,10 +205,14 @@ func usage() {
                                               /session, /allow), supervises one
                                             bridge per session; --env-file loads
                                             secrets from a file (used by service)
-  dctl service <install|uninstall|status> [--health-addr ADDR] [--env-file PATH]
-                                              install the serve daemon as a
-                                              boot-started native service
-                                              (systemd/launchd/Task Scheduler)
+  dctl service <install|uninstall|status|restart|update> [--health-addr ADDR]
+               [--env-file PATH] [--source DIR] [--no-pull]
+                                              manage the serve daemon: install it
+                                              as a boot-started native service
+                                              (systemd/launchd/Task Scheduler),
+                                              restart it, or update = (git pull +)
+                                              rebuild from --source (default cwd)
+                                              then restart — run after a merge
 
 env: DISCORD_BOT_TOKEN (required), DISCORD_CHANNEL_ID (default channel)
      DCTL_OWNER_ID (seed allowlist), DCTL_STATE_DIR (state dir)

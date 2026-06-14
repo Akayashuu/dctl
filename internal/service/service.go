@@ -155,6 +155,147 @@ func StatusCommand(c Config) (Command, error) {
 	}
 }
 
+// RestartCommands returns the platform commands that restart the running
+// service. Some platforms need more than one (stop then start).
+func RestartCommands(c Config) ([]Command, error) {
+	switch goos(c) {
+	case "linux":
+		return []Command{{Argv: []string{"systemctl", "--user", "restart", linuxUnitName}}}, nil
+	case "darwin":
+		// kickstart -k stops (if running) and starts the agent in one call.
+		target := fmt.Sprintf("gui/%d/%s", os.Getuid(), macLabel)
+		return []Command{{Argv: []string{"launchctl", "kickstart", "-k", target}}}, nil
+	case "windows":
+		return []Command{
+			{Argv: []string{"schtasks", "/end", "/tn", winTaskName}, IgnoreErr: true},
+			{Argv: []string{"schtasks", "/run", "/tn", winTaskName}},
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported OS %q", goos(c))
+	}
+}
+
+// Restart restarts the service inline (for a separate caller process, e.g. the
+// `dctl service restart` CLI — never the daemon restarting itself).
+func Restart(ctx context.Context, c Config) error {
+	cmds, err := RestartCommands(c)
+	if err != nil {
+		return err
+	}
+	for _, cmd := range cmds {
+		if err := runCommand(ctx, cmd); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RestartDetached restarts the service out-of-band so it survives the caller
+// being killed mid-restart — required when the daemon restarts *itself* (e.g.
+// from /service restart). On Linux the daemon shares the unit's cgroup, which
+// systemd kills on stop, so the restart is scheduled as a transient timer unit
+// (systemd-run) that lives outside that cgroup. launchd/Task Scheduler manage
+// the service from a separate process domain, so a normal restart already
+// survives there.
+func RestartDetached(ctx context.Context, c Config) error {
+	if goos(c) == "linux" {
+		// 3s, not 1s: the caller is mid-interaction and must finish editing its
+		// deferred reply (an HTTP round-trip to Discord) before systemd kills the
+		// unit's cgroup out from under it. 1s raced the reply; 3s clears it.
+		return runCommand(ctx, Command{Argv: []string{
+			"systemd-run", "--user", "--on-active=3",
+			"--timer-property=AccuracySec=100ms",
+			"systemctl", "--user", "restart", linuxUnitName,
+		}})
+	}
+	return Restart(ctx, c)
+}
+
+// validateSource confirms src looks like a dctl checkout (has go.mod and
+// cmd/dctl), so a build never runs `go build` in an unrelated directory.
+func validateSource(src string) error {
+	if src == "" {
+		return errors.New("no source dir set")
+	}
+	if fi, err := os.Stat(filepath.Join(src, "go.mod")); err != nil || fi.IsDir() {
+		return fmt.Errorf("not a dctl source checkout (no go.mod): %s", src)
+	}
+	if fi, err := os.Stat(filepath.Join(src, "cmd", "dctl")); err != nil || !fi.IsDir() {
+		return fmt.Errorf("not a dctl source checkout (no cmd/dctl): %s", src)
+	}
+	return nil
+}
+
+// Pull fast-forwards the source checkout. --ff-only fails loudly rather than
+// creating a merge commit when local and remote have diverged.
+func Pull(ctx context.Context, src string) error {
+	if err := validateSource(src); err != nil {
+		return err
+	}
+	if out, err := runCapture(ctx, src, "git", "pull", "--ff-only"); err != nil {
+		return fmt.Errorf("git pull: %s", out)
+	}
+	return nil
+}
+
+// Build compiles the dctl binary from src to binPath. `go build -o` writes a new
+// file and renames it into place, so replacing the live binary is safe while the
+// daemon runs (the restart then picks up the new file).
+func Build(ctx context.Context, src, binPath string) error {
+	if err := validateSource(src); err != nil {
+		return err
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		return fmt.Errorf("go toolchain not found in PATH")
+	}
+	if out, err := runCapture(ctx, src, "go", "build", "-o", binPath, "./cmd/dctl"); err != nil {
+		return fmt.Errorf("go build: %s", out)
+	}
+	return nil
+}
+
+// SourceVersion returns the short commit of the source checkout, or "" if it
+// can't be determined (best-effort, for user-facing messages only).
+func SourceVersion(ctx context.Context, src string) string {
+	out, err := runCapture(ctx, src, "git", "rev-parse", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// Smoke runs the freshly built binary with `--help`, which prints usage and
+// exits 0 without touching the network. A non-zero exit means the new binary is
+// broken (won't even parse its CLI), so the caller must not restart into it. The
+// daemon keeps running its old in-memory image; only the on-disk file changed.
+func Smoke(ctx context.Context, binPath string) error {
+	if binPath == "" {
+		return errors.New("no binary path to smoke-test")
+	}
+	if out, err := runCapture(ctx, "", binPath, "--help"); err != nil {
+		return fmt.Errorf("new binary failed smoke test (%s --help): %s", binPath, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// Update pulls (optional), rebuilds, smoke-tests, and restarts the service
+// inline. Used by the `dctl service update` CLI (a separate process from the
+// daemon).
+func Update(ctx context.Context, c Config, src string, pull bool) error {
+	if pull {
+		if err := Pull(ctx, src); err != nil {
+			return err
+		}
+	}
+	if err := Build(ctx, src, c.BinPath); err != nil {
+		return err
+	}
+	if err := Smoke(ctx, c.BinPath); err != nil {
+		return err
+	}
+	return Restart(ctx, c)
+}
+
 func linuxPlan(c Config) Plan {
 	unit := filepath.Join(c.Home, ".config", "systemd", "user", linuxUnitName)
 	content := "[Unit]\n" +
@@ -424,6 +565,18 @@ func writeFile(f FileWrite) error {
 		return fmt.Errorf("write %s: %w", f.Path, err)
 	}
 	return nil
+}
+
+// runCapture runs name in dir and returns its combined output, so a failing
+// build/pull can surface the toolchain's own message to the caller. It forces
+// GIT_TERMINAL_PROMPT=0 so an unattended `git pull` fails fast on a missing
+// credential instead of blocking on a prompt that no one will answer.
+func runCapture(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	c := exec.CommandContext(ctx, name, args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	out, err := c.CombinedOutput()
+	return []byte(strings.TrimSpace(string(out))), err
 }
 
 func runCommand(ctx context.Context, cmd Command) error {

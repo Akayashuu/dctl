@@ -74,8 +74,40 @@ func (c *Client) List(ctx context.Context) ([]Repo, error) {
 }
 
 func (c *Client) listGitHub(ctx context.Context) ([]Repo, error) {
-	raw, err := c.r.run(ctx, "", "gh", "repo", "list",
-		"--json", "nameWithOwner,sshUrl,description", "--limit", "100")
+	// Personal repos first; this query is the source of truth for auth errors.
+	out, err := c.ghRepoList(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Then each org the user belongs to. Org discovery/listing is best-effort:
+	// a missing org scope or a single failing org must not drop personal repos.
+	seen := make(map[string]struct{}, len(out))
+	for _, r := range out {
+		seen[r.FullName] = struct{}{}
+	}
+	for _, org := range c.ghOrgs(ctx) {
+		repos, err := c.ghRepoList(ctx, org)
+		if err != nil {
+			continue
+		}
+		for _, r := range repos {
+			if _, dup := seen[r.FullName]; dup {
+				continue
+			}
+			seen[r.FullName] = struct{}{}
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+// ghRepoList runs `gh repo list [owner]` and parses the result. With no owner it
+// lists the authenticated user's repos; with one it lists that org/user's.
+func (c *Client) ghRepoList(ctx context.Context, owner ...string) ([]Repo, error) {
+	args := []string{"repo", "list"}
+	args = append(args, owner...)
+	args = append(args, "--json", "nameWithOwner,sshUrl,description", "--limit", "100")
+	raw, err := c.r.run(ctx, "", "gh", args...)
 	if err != nil {
 		return nil, fmt.Errorf("gh repo list: %s", strings.TrimSpace(string(raw)))
 	}
@@ -92,6 +124,22 @@ func (c *Client) listGitHub(ctx context.Context) ([]Repo, error) {
 		out = append(out, Repo{FullName: it.NameWithOwner, CloneURL: it.SSHURL, Desc: it.Description, Forge: "github"})
 	}
 	return out, nil
+}
+
+// ghOrgs returns the logins of the orgs the authenticated user belongs to, or
+// nil on any failure (the caller treats orgs as best-effort).
+func (c *Client) ghOrgs(ctx context.Context) []string {
+	raw, err := c.r.run(ctx, "", "gh", "api", "--paginate", "user/orgs", "--jq", ".[].login")
+	if err != nil {
+		return nil
+	}
+	var orgs []string
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		if l := strings.TrimSpace(line); l != "" {
+			orgs = append(orgs, l)
+		}
+	}
+	return orgs
 }
 
 func (c *Client) listGitLab(ctx context.Context) ([]Repo, error) {

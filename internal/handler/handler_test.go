@@ -98,15 +98,36 @@ func (f *fakeForge) Clone(ctx context.Context, spec, workspace string) (string, 
 	return f.cloneDir, nil
 }
 
+type fakeUpdater struct {
+	version    string
+	buildErr   error
+	restartErr error
+	builds     []bool // pull flag per Build call
+	restarts   int
+}
+
+func (f *fakeUpdater) Build(ctx context.Context, pull bool) (string, error) {
+	f.builds = append(f.builds, pull)
+	return f.version, f.buildErr
+}
+func (f *fakeUpdater) Restart(ctx context.Context) error { f.restarts++; return f.restartErr }
+
 func newTestHandler(t *testing.T, homeType int) (*Handler, *fakeDiscord, *fakeSup, *fakeWT, *fakeForge, *state.State) {
+	t.Helper()
+	h, _, d, sup, wt, fg, st := newTestHandlerWithUpdater(t, homeType)
+	return h, d, sup, wt, fg, st
+}
+
+func newTestHandlerWithUpdater(t *testing.T, homeType int) (*Handler, *fakeUpdater, *fakeDiscord, *fakeSup, *fakeWT, *fakeForge, *state.State) {
 	t.Helper()
 	d := &fakeDiscord{homeType: homeType}
 	sup := &fakeSup{}
 	wt := &fakeWT{path: "/wt/x"}
 	fg := &fakeForge{gh: true}
+	up := &fakeUpdater{version: "abc1234"}
 	st := state.NewState(t.TempDir() + "/s.json")
 	st.AddAllow("owner")
-	return NewHandler(d, sup, wt, fg, st, "claude", t.TempDir()), d, sup, wt, fg, st
+	return NewHandler(d, sup, wt, fg, up, st, "claude", t.TempDir()), up, d, sup, wt, fg, st
 }
 
 func it(user, cmd string, sub string, opts ...dctl.InteractionOption) dctl.Interaction {
@@ -208,8 +229,10 @@ func TestSessionCreateShared(t *testing.T) {
 	}
 }
 
+// Names that slugify to nothing usable (no letters/digits) are still rejected
+// outright — nothing is created.
 func TestSessionCreateRejectsUnsafeName(t *testing.T) {
-	for _, name := range []string{"../escape", "a/b", "..", "with space", "bad;rm", ""} {
+	for _, name := range []string{"..", "/", "---", "   ", "🙂", ""} {
 		h, d, _, wt, _, st := newTestHandler(t, dctl.ChannelText)
 		st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
 		r := h.Handle(context.Background(), it("owner", "session", "create",
@@ -222,6 +245,28 @@ func TestSessionCreateRejectsUnsafeName(t *testing.T) {
 		}
 		if _, ok := st.FindSession(name); ok {
 			t.Fatalf("name %q: must not persist a session", name)
+		}
+	}
+}
+
+// Unsafe-looking but non-empty names are slugified into a safe slug and the
+// session is created under that slug — no traversal, no spaces, no metachars.
+func TestSessionCreateSlugifiesName(t *testing.T) {
+	cases := map[string]string{
+		"../escape":   "escape",
+		"a/b":         "a-b",
+		"with space":  "with-space",
+		"bad;rm":      "bad-rm",
+		"cmd improve": "cmd-improve",
+		"Feat/Login":  "feat-login",
+	}
+	for raw, want := range cases {
+		h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+		st.SetHome(state.HomeRef{ID: "cat1", Type: "category"})
+		h.Handle(context.Background(), it("owner", "session", "create",
+			dctl.InteractionOption{Name: "name", Value: raw}))
+		if _, ok := st.FindSession(want); !ok {
+			t.Fatalf("name %q: expected session under slug %q, sessions=%+v", raw, want, st.SnapshotSessions())
 		}
 	}
 }
@@ -876,7 +921,7 @@ func TestSessionClosePurgesParticipants(t *testing.T) {
 func TestAutocompleteSuggestsMatchingSessions(t *testing.T) {
 	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
 	seedSessions(t, st, "prospector", "payments", "frontend")
-	got := h.Autocomplete(acClose("owner", "p"))
+	got := h.Autocomplete(context.Background(), acClose("owner", "p"))
 	if len(got) != 2 {
 		t.Fatalf("expected 2 matches (prospector, payments), got %d: %+v", len(got), got)
 	}
@@ -892,28 +937,73 @@ func TestAutocompleteSuggestsMatchingSessions(t *testing.T) {
 func TestAutocompleteEmptyTypedReturnsAll(t *testing.T) {
 	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
 	seedSessions(t, st, "a", "b")
-	if got := h.Autocomplete(acClose("owner", "")); len(got) != 2 {
+	if got := h.Autocomplete(context.Background(), acClose("owner", "")); len(got) != 2 {
 		t.Fatalf("empty query should list all sessions, got %+v", got)
+	}
+}
+
+func TestAutocompleteClone(t *testing.T) {
+	h, _, _, _, fg, st := newTestHandler(t, dctl.ChannelText)
+	st.SetWorkspace(t.TempDir())
+	fg.repos = []forge.Repo{{FullName: "me/app"}, {FullName: "acme/api"}, {FullName: "me/site"}}
+	in := it("owner", "session", "create",
+		dctl.InteractionOption{Name: "clone", Type: 3, Value: "ap", Focused: true})
+	got := h.Autocomplete(context.Background(), in)
+	names := []string{}
+	for _, c := range got {
+		names = append(names, c.Value)
+	}
+	// "ap" matches "me/app" and "acme/api" (substring), not "me/site".
+	if len(got) != 2 || names[0] != "me/app" || names[1] != "acme/api" {
+		t.Fatalf("expected app+api, got %+v", names)
+	}
+}
+
+func TestAutocompleteProject(t *testing.T) {
+	ws := t.TempDir()
+	for _, p := range []string{"alpha", "beta"} {
+		if err := os.MkdirAll(ws+"/"+p+"/.git", 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	st.SetWorkspace(ws)
+	in := it("owner", "session", "create",
+		dctl.InteractionOption{Name: "project", Type: 3, Value: "alp", Focused: true})
+	got := h.Autocomplete(context.Background(), in)
+	if len(got) != 1 || got[0].Value != "alpha" {
+		t.Fatalf("expected alpha, got %+v", got)
+	}
+}
+
+func TestAutocompleteCmdSuggestsDefault(t *testing.T) {
+	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
+	in := it("owner", "session", "create",
+		dctl.InteractionOption{Name: "cmd", Type: 3, Value: "", Focused: true})
+	got := h.Autocomplete(context.Background(), in)
+	if len(got) != 1 || got[0].Value != "claude" {
+		t.Fatalf("expected default cmd 'claude', got %+v", got)
 	}
 }
 
 func TestAutocompleteDeniesNonAllowlisted(t *testing.T) {
 	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
 	seedSessions(t, st, "secret")
-	if got := h.Autocomplete(acClose("intruder", "s")); got != nil {
+	if got := h.Autocomplete(context.Background(), acClose("intruder", "s")); got != nil {
 		t.Fatalf("non-allowlisted user must get no suggestions, got %+v", got)
 	}
 }
 
-func TestAutocompleteIgnoresOtherSubcommands(t *testing.T) {
+func TestAutocompleteIgnoresCreateName(t *testing.T) {
 	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
 	seedSessions(t, st, "x")
-	// A create-subcommand focused name must NOT be autocompleted.
+	// A create-subcommand focused name must NOT be autocompleted (only
+	// project/clone/cmd on create, and name on close, are wired).
 	in := it("owner", "session", "create",
 		dctl.InteractionOption{Name: "name", Type: 3, Value: "x", Focused: true})
 	in.Type = dctl.InteractionAutocomplete
-	if got := h.Autocomplete(in); got != nil {
-		t.Fatalf("only close→name is wired, got %+v", got)
+	if got := h.Autocomplete(context.Background(), in); got != nil {
+		t.Fatalf("create→name is not wired, got %+v", got)
 	}
 }
 
@@ -924,5 +1014,83 @@ func TestFilterSessionChoicesCapsAt25(t *testing.T) {
 	}
 	if got := filterSessionChoices(sessions, ""); len(got) != maxAutocompleteChoices {
 		t.Fatalf("expected cap at %d, got %d", maxAutocompleteChoices, len(got))
+	}
+}
+
+func TestServiceRestart(t *testing.T) {
+	h, up, _, _, _, _, _ := newTestHandlerWithUpdater(t, dctl.ChannelText)
+	r := h.Handle(context.Background(), it("owner", "service", "restart"))
+	if up.restarts != 1 {
+		t.Fatalf("expected 1 restart, got %d", up.restarts)
+	}
+	if len(up.builds) != 0 {
+		t.Fatalf("restart must not build, got %+v", up.builds)
+	}
+	if !strings.Contains(r.Content, "Restarting") {
+		t.Fatalf("unexpected reply: %q", r.Content)
+	}
+}
+
+func TestServiceUpdatePullsBuildsRestarts(t *testing.T) {
+	h, up, _, _, _, _, _ := newTestHandlerWithUpdater(t, dctl.ChannelText)
+	r := h.Handle(context.Background(), it("owner", "service", "update"))
+	if len(up.builds) != 1 || up.builds[0] != true {
+		t.Fatalf("expected one build with pull=true, got %+v", up.builds)
+	}
+	if up.restarts != 1 {
+		t.Fatalf("expected restart after build, got %d", up.restarts)
+	}
+	if !strings.Contains(r.Content, "abc1234") {
+		t.Fatalf("reply should mention version: %q", r.Content)
+	}
+}
+
+func TestServiceUpdateNoPull(t *testing.T) {
+	h, up, _, _, _, _, _ := newTestHandlerWithUpdater(t, dctl.ChannelText)
+	h.Handle(context.Background(), it("owner", "service", "update",
+		dctl.InteractionOption{Name: "no_pull", Value: true}))
+	if len(up.builds) != 1 || up.builds[0] != false {
+		t.Fatalf("expected build with pull=false, got %+v", up.builds)
+	}
+}
+
+func TestServiceUpdateBuildFailsNoRestart(t *testing.T) {
+	h, up, _, _, _, _, _ := newTestHandlerWithUpdater(t, dctl.ChannelText)
+	up.buildErr = errors.New("compile boom")
+	r := h.Handle(context.Background(), it("owner", "service", "update"))
+	if up.restarts != 0 {
+		t.Fatalf("must not restart when build fails")
+	}
+	if !r.Ephemeral || !strings.Contains(r.Content, "boom") {
+		t.Fatalf("expected build error surfaced: %q", r.Content)
+	}
+}
+
+func TestSetSourceRejectsNonCheckout(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	dir := t.TempDir() // no go.mod
+	r := h.Handle(context.Background(), it("owner", "set", "source",
+		dctl.InteractionOption{Name: "path", Value: dir}))
+	if !r.Ephemeral || !strings.Contains(r.Content, "go.mod") {
+		t.Fatalf("expected rejection for non-checkout: %q", r.Content)
+	}
+	if st.SourceDir() != "" {
+		t.Fatalf("source should not be set, got %q", st.SourceDir())
+	}
+}
+
+func TestSetSourceAcceptsCheckout(t *testing.T) {
+	h, _, _, _, _, st := newTestHandler(t, dctl.ChannelText)
+	dir := t.TempDir()
+	if err := os.WriteFile(dir+"/go.mod", []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir+"/cmd/dctl", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.Handle(context.Background(), it("owner", "set", "source",
+		dctl.InteractionOption{Name: "path", Value: dir}))
+	if st.SourceDir() != dir {
+		t.Fatalf("expected source %q, got %q", dir, st.SourceDir())
 	}
 }

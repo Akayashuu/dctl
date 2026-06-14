@@ -174,14 +174,18 @@ func dctlCommands() []map[string]any {
 				"options": []map[string]any{
 					{"name": "path", "description": "Absolute path to the workspace dir", "type": typeStr, "required": true},
 				}},
+			{"name": "source", "description": "Set the dctl source checkout (/service update builds from it)", "type": typeSub,
+				"options": []map[string]any{
+					{"name": "path", "description": "Absolute path to the dctl source checkout", "type": typeStr, "required": true},
+				}},
 		}},
 		{"name": "session", "description": "Manage Claude sessions", "options": []map[string]any{
 			{"name": "create", "description": "Create a session", "type": typeSub, "options": []map[string]any{
 				{"name": "name", "description": "Session name", "type": typeStr, "required": true},
-				{"name": "cmd", "description": "Override bridged command", "type": typeStr},
+				{"name": "cmd", "description": "Override bridged command", "type": typeStr, "autocomplete": true},
 				{"name": "shared", "description": "Run in the main checkout (no worktree)", "type": typeBool},
-				{"name": "project", "description": "Workspace project to start from (see /workspace list)", "type": typeStr},
-				{"name": "clone", "description": "Remote repo to clone first (owner/name or URL)", "type": typeStr},
+				{"name": "project", "description": "Workspace project to start from (see /workspace list)", "type": typeStr, "autocomplete": true},
+				{"name": "clone", "description": "Remote repo to clone first (owner/name or URL)", "type": typeStr, "autocomplete": true},
 			}},
 			{"name": "close", "description": "Close a session", "type": typeSub, "options": []map[string]any{
 				{"name": "name", "description": "Session name", "type": typeStr, "required": true, "autocomplete": true},
@@ -212,6 +216,12 @@ func dctlCommands() []map[string]any {
 					{"name": "github", "value": "github"},
 					{"name": "gitlab", "value": "gitlab"},
 				}},
+			}},
+		}},
+		{"name": "service", "description": "Control the dctl daemon", "options": []map[string]any{
+			{"name": "restart", "description": "Restart the daemon", "type": typeSub},
+			{"name": "update", "description": "Pull, rebuild from source, and restart", "type": typeSub, "options": []map[string]any{
+				{"name": "no_pull", "description": "Skip git pull; build the current checkout", "type": typeBool},
 			}},
 		}},
 		{"name": "allow", "description": "Manage the command allowlist", "options": []map[string]any{
@@ -265,8 +275,12 @@ type AutocompleteChoice struct {
 }
 
 // RespondAutocomplete sends an APPLICATION_COMMAND_AUTOCOMPLETE_RESULT (type 8)
-// reply carrying the suggestion list (Discord caps it at 25; callers must too).
+// reply carrying the suggestion list. Discord accepts at most 25 choices; extras
+// are dropped here so callers need not pre-trim.
 func (c *Client) RespondAutocomplete(ctx context.Context, id, token string, choices []AutocompleteChoice) error {
+	if len(choices) > 25 {
+		choices = choices[:25]
+	}
 	cs := make([]map[string]any, 0, len(choices))
 	for _, ch := range choices {
 		cs = append(cs, map[string]any{"name": ch.Name, "value": ch.Value})

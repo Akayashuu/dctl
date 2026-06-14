@@ -13,10 +13,51 @@ import (
 	"github.com/vskstudio/dctl/internal/handler"
 	"github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/instanceid"
+	"github.com/vskstudio/dctl/internal/service"
 	"github.com/vskstudio/dctl/internal/state"
 	"github.com/vskstudio/dctl/internal/supervisor"
 	"github.com/vskstudio/dctl/internal/worktree"
 )
+
+// serviceUpdater backs /service update|restart from inside the daemon. It binds
+// the service config to the persisted source dir, builds from source, and
+// restarts the unit out-of-band so the daemon can reply before it is replaced.
+type serviceUpdater struct {
+	cfg service.Config
+	st  *state.State
+}
+
+// buildTimeout bounds the unattended pull+build behind /service update so a
+// stuck network fetch or compile can't hold the interaction open until the
+// token expires (the CLI path is attended, so it isn't bounded).
+const buildTimeout = 5 * time.Minute
+
+func (u serviceUpdater) Build(ctx context.Context, pull bool) (string, error) {
+	src := u.st.SourceDir()
+	if src == "" {
+		return "", fmt.Errorf("no source set — run /set source <path> first")
+	}
+	ctx, cancel := context.WithTimeout(ctx, buildTimeout)
+	defer cancel()
+	if pull {
+		if err := service.Pull(ctx, src); err != nil {
+			return "", err
+		}
+	}
+	if err := service.Build(ctx, src, u.cfg.BinPath); err != nil {
+		return "", err
+	}
+	// Refuse to advertise a version we won't restart into: if the new binary
+	// can't even run --help, fail here so the handler never schedules a restart.
+	if err := service.Smoke(ctx, u.cfg.BinPath); err != nil {
+		return "", err
+	}
+	return service.SourceVersion(ctx, src), nil
+}
+
+func (u serviceUpdater) Restart(ctx context.Context) error {
+	return service.RestartDetached(ctx, u.cfg)
+}
 
 // Options holds the parsed flags for the serve daemon.
 type Options struct {
@@ -130,7 +171,12 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 
 	wt := worktree.NewWorktreer(ctx, instID)
 	fg := forge.New()
-	hdl := handler.NewHandler(c, sup, wt, fg, st, o.DefaultCmd, partDir)
+	// service config resolves the daemon's own binary path for /service update;
+	// the rare error (no executable/home) leaves an empty BinPath, which Build
+	// then reports cleanly rather than blocking daemon startup.
+	upCfg, _ := service.DefaultConfig()
+	up := serviceUpdater{cfg: upCfg, st: st}
+	hdl := handler.NewHandler(c, sup, wt, fg, up, st, o.DefaultCmd, partDir)
 
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)
@@ -161,9 +207,15 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			select {
 			case in := <-gw.Interactions:
 				if in.Type == dctl.InteractionAutocomplete {
-					if err := c.RespondAutocomplete(ctx, in.ID, in.Token, hdl.Autocomplete(in)); err != nil {
-						fmt.Fprintf(os.Stderr, "autocomplete: %v\n", err)
-					}
+					// Off the dispatch loop: Autocomplete shells out to gh/glab
+					// (up to acTimeout), which must not stall other interactions.
+					// Answer within Discord's ~3s deadline (handler bounds its work).
+					go func(in dctl.Interaction) {
+						choices := hdl.Autocomplete(ctx, in)
+						if err := c.RespondAutocomplete(ctx, in.ID, in.Token, choices); err != nil {
+							fmt.Fprintf(os.Stderr, "autocomplete: %v\n", err)
+						}
+					}(in)
 					continue
 				}
 				if hdl.Slow(in) {

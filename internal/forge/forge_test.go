@@ -7,12 +7,15 @@ import (
 	"testing"
 )
 
-// fakeRunner records calls and returns scripted output/errors keyed by argv[0].
+// fakeRunner records calls and returns scripted output/errors keyed by argv[0],
+// or by the full "name arg arg…" line when outByArgs has a matching entry (used
+// to distinguish e.g. `gh repo list` from `gh api user/orgs`).
 type fakeRunner struct {
-	calls   [][]string
-	out     map[string][]byte // keyed by first arg (e.g. "gh", "glab", "git")
-	err     map[string]error
-	lookErr map[string]error // exec.LookPath result per binary
+	calls     [][]string
+	out       map[string][]byte // keyed by first arg (e.g. "gh", "glab", "git")
+	outByArgs map[string][]byte // keyed by the full joined argv, takes precedence
+	err       map[string]error
+	lookErr   map[string]error // exec.LookPath result per binary
 }
 
 func (f *fakeRunner) look(name string) error {
@@ -23,7 +26,13 @@ func (f *fakeRunner) look(name string) error {
 }
 
 func (f *fakeRunner) run(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
-	f.calls = append(f.calls, append([]string{name}, args...))
+	argv := append([]string{name}, args...)
+	f.calls = append(f.calls, argv)
+	if f.outByArgs != nil {
+		if out, ok := f.outByArgs[strings.Join(argv, " ")]; ok {
+			return out, f.err[name]
+		}
+	}
 	return f.out[name], f.err[name]
 }
 
@@ -50,6 +59,56 @@ func TestListMergesGitHubOnly(t *testing.T) {
 	}
 	if len(repos) != 1 || repos[0].FullName != "me/app" || repos[0].Forge != "github" {
 		t.Fatalf("unexpected repos: %+v", repos)
+	}
+}
+
+func TestListGitHubIncludesOrgs(t *testing.T) {
+	const flags = "--json nameWithOwner,sshUrl,description --limit 100"
+	r := &fakeRunner{
+		lookErr: map[string]error{"glab": errors.New("nope")}, // only gh present
+		outByArgs: map[string][]byte{
+			"gh repo list " + flags:                      []byte(`[{"nameWithOwner":"me/app","sshUrl":"git@github.com:me/app.git"}]`),
+			"gh api --paginate user/orgs --jq .[].login": []byte("acme\nwidgets\n"),
+			"gh repo list acme " + flags:                 []byte(`[{"nameWithOwner":"acme/api","sshUrl":"u"},{"nameWithOwner":"me/app","sshUrl":"u"}]`),
+			"gh repo list widgets " + flags:              []byte(`[{"nameWithOwner":"widgets/web","sshUrl":"u"}]`),
+		},
+	}
+	c := &Client{r: r}
+	repos, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	got := map[string]bool{}
+	for _, rp := range repos {
+		got[rp.FullName] = true
+	}
+	for _, want := range []string{"me/app", "acme/api", "widgets/web"} {
+		if !got[want] {
+			t.Fatalf("expected %q in repos, got %+v", want, repos)
+		}
+	}
+	// me/app appears in both personal and acme listings but must be deduped.
+	if len(repos) != 3 {
+		t.Fatalf("expected 3 deduped repos, got %d: %+v", len(repos), repos)
+	}
+}
+
+// A failing org enumeration must not drop the user's personal repos.
+func TestListGitHubOrgFailureNonFatal(t *testing.T) {
+	r := &fakeRunner{
+		lookErr: map[string]error{"glab": errors.New("nope")},
+		out: map[string][]byte{
+			"gh": []byte(`[{"nameWithOwner":"me/app","sshUrl":"u"}]`),
+		},
+		err: map[string]error{}, // gh api user/orgs returns the repo JSON; treated as junk org, deduped away
+	}
+	c := &Client{r: r}
+	repos, err := c.List(context.Background())
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(repos) != 1 || repos[0].FullName != "me/app" {
+		t.Fatalf("expected just personal repo, got %+v", repos)
 	}
 }
 
