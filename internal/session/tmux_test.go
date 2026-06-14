@@ -24,6 +24,16 @@ func TestTmuxResponderIntegration(t *testing.T) {
 	}
 }
 
+func TestSendLiteralArgsTerminatesOptions(t *testing.T) {
+	// A Discord message starting with "-" must reach the pane as literal keys,
+	// never as a send-keys flag — the "--" terminator guarantees that.
+	got := strings.Join(sendLiteralArgs("dctl-chan", "-h --version"), " ")
+	want := "send-keys -t dctl-chan -l -- -h --version"
+	if got != want {
+		t.Fatalf("sendLiteralArgs = %q, want %q", got, want)
+	}
+}
+
 func TestNewLines(t *testing.T) {
 	before := "banner\n> \n"
 	after := "banner\nhello from claude\nmore output\n> \n"

@@ -194,6 +194,13 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	return nil
 }
 
+// sendLiteralArgs builds the tmux send-keys argv that types text verbatim into a
+// pane. The `--` terminates option parsing so a message beginning with `-` (e.g.
+// "-h") is typed literally instead of being mistaken for a send-keys flag.
+func sendLiteralArgs(sess, text string) []string {
+	return []string{"send-keys", "-t", sess, "-l", "--", text}
+}
+
 func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -207,7 +214,7 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 	// read as Enter, which would submit the message early and desync the turn.
 	// A single coherent line is the v1 contract (see SKILL.md known limitation).
 	text := sanitizeInput(m.Content)
-	if out, err := tmuxRun("send-keys", "-t", t.sessName, "-l", text); err != nil {
+	if out, err := tmuxRun(sendLiteralArgs(t.sessName, text)...); err != nil {
 		return "", fmt.Errorf("tmux send-keys: %v: %s", err, out)
 	}
 	if out, err := tmuxRun("send-keys", "-t", t.sessName, "Enter"); err != nil {
