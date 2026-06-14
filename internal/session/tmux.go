@@ -193,6 +193,16 @@ func tmuxRunCtx(ctx context.Context, args ...string) (string, error) {
 	return string(out), err
 }
 
+// tmuxRunCtxStdin runs a tmux command bound to ctx, piping stdin to the process.
+// Used by load-buffer to feed arbitrary message text (newlines, leading dashes)
+// without it ever reaching argv — no quoting/option-injection surface.
+func tmuxRunCtxStdin(ctx context.Context, stdin string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "tmux", args...)
+	cmd.Stdin = strings.NewReader(stdin)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 func (t *tmuxResponder) capture(ctx context.Context) (string, error) {
 	return tmuxRunCtx(ctx, "capture-pane", "-p", "-S", "-", "-t", t.sessName)
 }
@@ -247,7 +257,7 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	// Each turn advances the baseline, so the human's first reply diffs against
 	// the post-priming pane and never echoes the priming output back.
 	for i, p := range t.init {
-		p = sanitizeInput(p)
+		p = normalizeNewlines(p)
 		if strings.TrimSpace(p) == "" {
 			continue
 		}
@@ -273,10 +283,9 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 			return "", err
 		}
 	}
-	// Collapse embedded newlines to spaces: a literal newline sent to the TUI is
-	// read as Enter, which would submit the message early and desync the turn.
-	// A single coherent line is the v1 contract (see SKILL.md known limitation).
-	return t.turn(ctx, sanitizeInput(m.Content))
+	// Preserve the message's line structure; typeText bracket-pastes multi-line
+	// input so embedded newlines stay literal instead of submitting early.
+	return t.turn(ctx, normalizeNewlines(m.Content))
 }
 
 // turn types one already-sanitized line into the pane, submits it, waits for the
@@ -285,8 +294,8 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 // loop in start().
 func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	before := t.baseline
-	if out, err := tmuxRunCtx(ctx, sendLiteralArgs(t.sessName, text)...); err != nil {
-		return "", fmt.Errorf("tmux send-keys: %v: %s", err, out)
+	if err := t.typeText(ctx, text); err != nil {
+		return "", err
 	}
 	if out, err := tmuxRunCtx(ctx, "send-keys", "-t", t.sessName, "Enter"); err != nil {
 		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
@@ -313,12 +322,45 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	return reply, nil
 }
 
-// sanitizeInput flattens a message to a single line so send-keys -l never feeds
-// a newline (= Enter) into the TUI mid-message. CR/LF runs collapse to one space.
-func sanitizeInput(s string) string {
+// normalizeNewlines canonicalizes line endings to "\n" without flattening, so a
+// multi-line message keeps its structure. A bare "\n" sent via send-keys would
+// read as Enter (early submit), so typeText routes multi-line text through a
+// bracketed paste instead — see typeText.
+func normalizeNewlines(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", "\n")
-	s = strings.ReplaceAll(s, "\r", "\n")
-	return strings.Join(strings.Split(s, "\n"), " ")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+// pasteBufferName derives a per-session tmux buffer name for the paste path, so
+// two sessions pasting concurrently never clash on a shared buffer.
+func pasteBufferName(sess string) string { return "dctlbuf-" + sess }
+
+// pasteBufferArgs builds the paste-buffer argv: -p enables bracketed paste so the
+// TUI treats embedded newlines as literal input (not Enter), and -d drops the
+// buffer afterwards so it never lingers in tmux's paste ring.
+func pasteBufferArgs(sess, buf string) []string {
+	return []string{"paste-buffer", "-d", "-p", "-b", buf, "-t", sess}
+}
+
+// typeText types text into the pane without submitting it. A single line goes
+// through send-keys -l (fast, the "--" guards a leading dash). Multi-line text is
+// loaded into a tmux buffer from stdin (no argv exposure) and bracket-pasted, so
+// the embedded newlines land as literal input instead of submitting each line.
+func (t *tmuxResponder) typeText(ctx context.Context, text string) error {
+	if !strings.Contains(text, "\n") {
+		if out, err := tmuxRunCtx(ctx, sendLiteralArgs(t.sessName, text)...); err != nil {
+			return fmt.Errorf("tmux send-keys: %v: %s", err, out)
+		}
+		return nil
+	}
+	buf := pasteBufferName(t.sessName)
+	if out, err := tmuxRunCtxStdin(ctx, text, "load-buffer", "-b", buf, "-"); err != nil {
+		return fmt.Errorf("tmux load-buffer: %v: %s", err, out)
+	}
+	if out, err := tmuxRunCtx(ctx, pasteBufferArgs(t.sessName, buf)...); err != nil {
+		return fmt.Errorf("tmux paste-buffer: %v: %s", err, out)
+	}
+	return nil
 }
 
 func (t *tmuxResponder) Close() error {

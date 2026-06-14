@@ -124,12 +124,40 @@ func TestNewLines(t *testing.T) {
 	}
 }
 
-func TestSanitizeInput(t *testing.T) {
-	if got := sanitizeInput("one\ntwo\r\nthree\rfour"); got != "one two three four" {
-		t.Fatalf("sanitizeInput = %q, want %q", got, "one two three four")
+// A multi-line message is bracket-pasted as one unit, then a single Enter
+// submits it — so the turn captures output from every line instead of desyncing
+// on the first embedded newline.
+func TestTmuxResponderMultiline(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not installed")
 	}
-	if got := sanitizeInput("single line"); got != "single line" {
-		t.Fatalf("sanitizeInput should leave single lines untouched, got %q", got)
+	r := newTmuxResponder("dctl-test-"+t.Name(), "", []string{"bash", "--norc"}, "", 10*time.Second, nil)
+	defer r.Close()
+	out, err := r.Respond(context.Background(), DctlMessage{Content: "echo AA\necho BB"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "AA") || !strings.Contains(out, "BB") {
+		t.Fatalf("expected both lines' output (AA and BB), got %q", out)
+	}
+}
+
+func TestNormalizeNewlines(t *testing.T) {
+	// CRLF and lone CR canonicalize to LF; line structure is preserved (not flattened).
+	if got := normalizeNewlines("one\ntwo\r\nthree\rfour"); got != "one\ntwo\nthree\nfour" {
+		t.Fatalf("normalizeNewlines = %q, want %q", got, "one\ntwo\nthree\nfour")
+	}
+	if got := normalizeNewlines("single line"); got != "single line" {
+		t.Fatalf("normalizeNewlines should leave single lines untouched, got %q", got)
+	}
+}
+
+func TestPasteBufferArgsBracketed(t *testing.T) {
+	// -p (bracketed paste) keeps embedded newlines literal; -d drops the buffer.
+	got := strings.Join(pasteBufferArgs("dctl-chan", pasteBufferName("dctl-chan")), " ")
+	want := "paste-buffer -d -p -b dctlbuf-dctl-chan -t dctl-chan"
+	if got != want {
+		t.Fatalf("pasteBufferArgs = %q, want %q", got, want)
 	}
 }
 

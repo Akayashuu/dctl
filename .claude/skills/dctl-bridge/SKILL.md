@@ -62,9 +62,10 @@ The bridge can talk to Claude three ways:
   warning and **falls back to the `stream` backend** automatically (so the
   default still works); `dctl service install` also flags a missing tmux. You can `tmux attach -t
   dctl-<channel>` (or `dctl-<DCTL_INSTANCE_ID>-<channel>` when that env var is
-  set) to land in the same live session the bridge is driving. **Known limit:**
-  multi-line messages are flattened to one line before sending (a literal
-  newline would submit early); send separate messages for separate turns.
+  set) to land in the same live session the bridge is driving. Multi-line
+  messages are sent as one unit via tmux **bracketed paste** (a buffer loaded
+  from stdin, then `paste-buffer -p`), so embedded newlines stay literal instead
+  of submitting early; a single Enter then commits the whole message.
 
 From the daemon: `/session create name:foo backend:tmux` creates a tmux-backed
 session; the backend is persisted, so a daemon restart respawns it the same way.
