@@ -976,13 +976,40 @@ func TestAutocompleteProject(t *testing.T) {
 	}
 }
 
-func TestAutocompleteCmdSuggestsDefault(t *testing.T) {
+func TestAutocompleteCmdSuggestsDefaultThenMatrix(t *testing.T) {
 	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
 	in := it("owner", "session", "create",
 		dctl.InteractionOption{Name: "cmd", Type: 3, Value: "", Focused: true})
 	got := h.Autocomplete(context.Background(), in)
-	if len(got) != 1 || got[0].Value != "claude" {
-		t.Fatalf("expected default cmd 'claude', got %+v", got)
+	// Configured default leads, then the model × effort matrix follows.
+	if len(got) == 0 || got[0].Value != "claude" {
+		t.Fatalf("default cmd must lead, got %+v", got)
+	}
+	if len(got) < 2 {
+		t.Fatalf("expected default + matrix presets, got only %d", len(got))
+	}
+	if len(got) > 25 {
+		t.Fatalf("must respect Discord's 25-choice cap, got %d", len(got))
+	}
+	for _, c := range got {
+		if len(c.Value) > 100 || len(c.Name) > 100 {
+			t.Fatalf("choice exceeds Discord 100-char limit: %+v", c)
+		}
+	}
+}
+
+func TestAutocompleteCmdFiltersByPartial(t *testing.T) {
+	h, _, _, _, _, _ := newTestHandler(t, dctl.ChannelText)
+	in := it("owner", "session", "create",
+		dctl.InteractionOption{Name: "cmd", Type: 3, Value: "haiku", Focused: true})
+	got := h.Autocomplete(context.Background(), in)
+	if len(got) == 0 {
+		t.Fatal("typing 'haiku' should match the Haiku presets")
+	}
+	for _, c := range got {
+		if !strings.Contains(strings.ToLower(c.Name+" "+c.Value), "haiku") {
+			t.Fatalf("partial 'haiku' returned a non-matching choice: %+v", c)
+		}
 	}
 }
 

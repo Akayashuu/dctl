@@ -449,7 +449,7 @@ func (h *Handler) Autocomplete(ctx context.Context, in dctl.Interaction) []dctl.
 	case sub == "create" && field == "clone":
 		return h.cloneChoices(ctx, partial)
 	case sub == "create" && field == "cmd":
-		return filterChoices(h.cmdSuggestions(), partial)
+		return h.cmdChoices(partial)
 	case sub == "close" && field == "name":
 		return filterSessionChoices(h.st.SnapshotSessions(), partial)
 	default:
@@ -480,12 +480,54 @@ func (h *Handler) localProjects() []string {
 	return names
 }
 
-// cmdSuggestions offers the default bridged command as a starting point.
-func (h *Handler) cmdSuggestions() []string {
-	if h.defaultCmd == "" {
-		return nil
+// modelPresets are the models offered as ready-made cmd choices, friendly label
+// → claude --model value. The [1m] suffix selects the 1M context window (absence
+// = standard 200k). Keep the highest-context/priciest entries clearly labelled.
+var modelPresets = []struct{ label, model string }{
+	{"Opus 4.8 · 200k", "claude-opus-4-8"},
+	{"Opus 4.8 · 1M", "claude-opus-4-8[1m]"},
+	{"Sonnet 4.6", "claude-sonnet-4-6"},
+	{"Haiku 4.5", "claude-haiku-4-5-20251001"},
+}
+
+// effortPresets are claude's reasoning-effort levels, cheapest → priciest.
+var effortPresets = []string{"low", "medium", "high", "xhigh", "max"}
+
+// cmdChoices offers ready-made bridged commands for the /session create cmd
+// field: the configured default first, then the full model × effort matrix so a
+// user can dial model and reasoning effort without typing flags. Each choice
+// shows a friendly label but inserts the full command (passed verbatim to
+// claude — see session.streamArgv), so any extra flag (e.g. --max-budget-usd)
+// can still be appended by hand. Filtered case-insensitively against label and
+// command, capped at Discord's 25-choice / 100-char limits.
+func (h *Handler) cmdChoices(partial string) []dctl.AutocompleteChoice {
+	bin := "claude"
+	if f := strings.Fields(h.defaultCmd); len(f) > 0 {
+		bin = f[0]
 	}
-	return []string{h.defaultCmd}
+	p := strings.ToLower(partial)
+	out := make([]dctl.AutocompleteChoice, 0, maxAutocompleteChoices)
+	seen := map[string]bool{}
+	add := func(label, cmd string) {
+		if cmd == "" || seen[cmd] || len(cmd) > 100 || len(label) > 100 {
+			return
+		}
+		if p != "" && !strings.Contains(strings.ToLower(label+" "+cmd), p) {
+			return
+		}
+		seen[cmd] = true
+		out = append(out, dctl.AutocompleteChoice{Name: label, Value: cmd})
+	}
+	add("Default (config.json)", h.defaultCmd)
+	for _, m := range modelPresets {
+		for _, e := range effortPresets {
+			if len(out) >= maxAutocompleteChoices {
+				return out
+			}
+			add(m.label+" · "+e, bin+" --model "+m.model+" --effort "+e)
+		}
+	}
+	return out
 }
 
 // cloneChoices lists remote repos (owner/name) under a tight timeout so the
