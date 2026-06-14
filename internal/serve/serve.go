@@ -160,6 +160,12 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 		for {
 			select {
 			case in := <-gw.Interactions:
+				if in.Type == dctl.InteractionAutocomplete {
+					if err := c.RespondAutocomplete(ctx, in.ID, in.Token, hdl.Autocomplete(in)); err != nil {
+						fmt.Fprintf(os.Stderr, "autocomplete: %v\n", err)
+					}
+					continue
+				}
 				if hdl.Slow(in) {
 					// Ack within 3s, then do the slow work and edit the reply in
 					// off the dispatch loop so one clone can't stall the daemon.
