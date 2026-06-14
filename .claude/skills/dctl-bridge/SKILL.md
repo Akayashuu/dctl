@@ -37,6 +37,8 @@ session per message.
 | `-i N` | `5` | Poll interval (seconds). |
 | `--state FILE` | — | Persist last-seen id. **Authoritative**: a restart resumes exactly here and never replays handled messages. Always pass it. |
 | `--after ID` | — | Seeds the start id for the **first run only** (ignored once `--state` exists). |
+| `--progress LEVEL` | `full` | Live activity feedback per message: `off`, `actions` (tools only), `full` (tools + reasoning). |
+| `--progress-keep` | off | Keep the full progress list instead of collapsing to a one-line summary. |
 | `-v` | off | Log activity to stderr. |
 | `--backend tmux\|stream\|oneshot` | `tmux` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
 | `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
@@ -120,6 +122,17 @@ each human message **immediately on pickup** with 👀, then swaps it for ✅ on
 answer is posted (⚠️ on empty/error). The human sees the message was registered
 without waiting. Reactions need the bot's **Add Reactions** permission; if missing
 they're skipped silently (the reply still posts).
+
+Beyond the reaction, in stream mode the bridge posts a single **live progress
+message** per question (created on the first tool call, edited in place). At
+`--progress full` (default) it shows each tool the session runs plus its reasoning
+text; `--progress actions` shows tools only; `--progress off` disables it. On the
+**tmux backend** (the default) only tool actions are available — the TUI has no
+structured reasoning feed — so `--progress full` behaves like `actions` there.
+When the answer is ready the progress message collapses to a one-line summary
+(`✅ 6 actions (Bash×2, Read×3, Edit) · 28s · $0.04`) unless `--progress-keep` is set.
+Editing needs the bot's **Manage Messages** / send permission; failures are ignored
+so the reply still posts.
 
 **State / no-replay:** the bridge marks a message handled (persists its id) *before*
 running the command. This guarantees a restart never replays — at the cost that a
