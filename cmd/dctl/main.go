@@ -203,8 +203,8 @@ func usage() {
                                               always-on Gateway daemon: bot online
                                               24/7, slash commands (/set home,
                                               /session, /allow), supervises one
-                                              bridge per session; --env-file loads
-                                              secrets from a file (used by service)
+                                            bridge per session; --env-file loads
+                                            secrets from a file (used by service)
   dctl service <install|uninstall|status> [--health-addr ADDR] [--env-file PATH]
                                               install the serve daemon as a
                                               boot-started native service

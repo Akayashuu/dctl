@@ -15,6 +15,7 @@ func runServe(ctx context.Context, c *dctl.Client, token string, args []string) 
 	defaultCmd := fs.String("cmd", "claude", "default bridged base command for new sessions (stream-json mode adds -p and the stream flags)")
 	healthAddr := fs.String("health-addr", "", "if set (e.g. :8787), serve GET /health")
 	statusChannel := fs.String("status-channel", "", "if set, maintain a self-updating status embed there")
+	instanceID := fs.String("instance", os.Getenv("DCTL_INSTANCE_ID"), "per-daemon instance id (slug) used to namespace shared Discord/git resources; defaults to DCTL_INSTANCE_ID")
 	envFile := fs.String("env-file", "", "load DISCORD_BOT_TOKEN and other vars from this file before starting (used by `dctl service`)")
 	fs.Parse(args)
 	if *envFile != "" {
@@ -35,6 +36,7 @@ func runServe(ctx context.Context, c *dctl.Client, token string, args []string) 
 		DefaultCmd:    *defaultCmd,
 		HealthAddr:    *healthAddr,
 		StatusChannel: *statusChannel,
+		InstanceID:    *instanceID,
 		Token:         token,
 	})
 }

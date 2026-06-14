@@ -21,6 +21,97 @@ type Session struct {
 	Type      string `json:"type"` // "text" | "forum"
 	Cmd       string `json:"cmd"`
 	Worktree  string `json:"worktree,omitempty"` // abs path; empty for a shared session
+	Project   string `json:"project,omitempty"`  // workspace sub-dir the session started from
+
+	Allow        []string `json:"allow,omitempty"`        // curated per-session allowlist
+	Participants []string `json:"participants,omitempty"` // observed authors (cache; journal is source of truth)
+}
+
+// sessionIndexLocked returns the index of the named session, or -1.
+func (s *State) sessionIndexLocked(name string) int {
+	for i := range s.Sessions {
+		if s.Sessions[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// AddSessionAllow adds userID to the session's per-session allowlist.
+// Returns (true, nil) if newly added, (false, nil) if already present,
+// and an error if the session does not exist.
+func (s *State) AddSessionAllow(name, userID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.sessionIndexLocked(name)
+	if i < 0 {
+		return false, fmt.Errorf("no session %q", name)
+	}
+	for _, id := range s.Sessions[i].Allow {
+		if id == userID {
+			return false, nil
+		}
+	}
+	s.Sessions[i].Allow = append(s.Sessions[i].Allow, userID)
+	return true, s.saveLocked()
+}
+
+// RemoveSessionAllow removes userID from the session's allowlist.
+// Returns (true, nil) if it was present, (false, nil) if absent.
+func (s *State) RemoveSessionAllow(name, userID string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.sessionIndexLocked(name)
+	if i < 0 {
+		return false, fmt.Errorf("no session %q", name)
+	}
+	out := s.Sessions[i].Allow[:0]
+	found := false
+	for _, id := range s.Sessions[i].Allow {
+		if id == userID {
+			found = true
+			continue
+		}
+		out = append(out, id)
+	}
+	s.Sessions[i].Allow = out
+	if !found {
+		return false, nil
+	}
+	return true, s.saveLocked()
+}
+
+// SessionAllowed reports whether userID may drive the session's bridge:
+// global allowlist OR the session's per-session allowlist.
+func (s *State) SessionAllowed(name, userID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range s.Allow { // global
+		if id == userID {
+			return true
+		}
+	}
+	i := s.sessionIndexLocked(name)
+	if i < 0 {
+		return false
+	}
+	for _, id := range s.Sessions[i].Allow {
+		if id == userID {
+			return true
+		}
+	}
+	return false
+}
+
+// SessionAllowlist returns a copy of the session's curated allowlist (nil if none).
+func (s *State) SessionAllowlist(name string) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	i := s.sessionIndexLocked(name)
+	if i < 0 {
+		return nil
+	}
+	return append([]string(nil), s.Sessions[i].Allow...)
 }
 
 // State is the daemon's persisted configuration. All access is mutex-guarded.
@@ -29,9 +120,11 @@ type State struct {
 	path            string     `json:"-"`
 	Home            HomeRef    `json:"home"`
 	Allow           []string   `json:"allow"`
-	Repo            string     `json:"repo,omitempty"` // project sessions operate on; defaults to daemon cwd
+	Repo            string     `json:"repo,omitempty"`      // legacy single-repo root; defaults to daemon cwd
+	Workspace       string     `json:"workspace,omitempty"` // abs path to the workspace root; preferred over Repo
 	Sessions        []Session  `json:"sessions"`
 	StatusMessageID string     `json:"statusMessageID,omitempty"` // cached id of the status embed
+	InstanceID      string     `json:"instanceID,omitempty"`      // per-daemon namespace for global resources; "" = legacy
 }
 
 // NewState returns an empty state bound to path (not yet written).
@@ -161,6 +254,24 @@ func (s *State) SetHome(h HomeRef) error {
 	return s.saveLocked()
 }
 
+// SetWorkspace records the workspace root and persists.
+func (s *State) SetWorkspace(path string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.Workspace = path
+	return s.saveLocked()
+}
+
+// WorkspaceRoot returns the configured workspace, else the legacy Repo, else "".
+func (s *State) WorkspaceRoot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Workspace != "" {
+		return s.Workspace
+	}
+	return s.Repo
+}
+
 // SetStatusMessageID caches the status embed's message id and persists.
 func (s *State) SetStatusMessageID(id string) error {
 	s.mu.Lock()
@@ -174,4 +285,25 @@ func (s *State) SnapshotSessions() []Session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]Session(nil), s.Sessions...)
+}
+
+// QualifiedName maps a logical session name to the name used on global resources
+// (Discord title): "<InstanceID>__<name>". In legacy mode (empty InstanceID) it
+// returns the bare logical name, preserving pre-namespacing behavior.
+func (s *State) QualifiedName(name string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.InstanceID == "" {
+		return name
+	}
+	return s.InstanceID + "__" + name
+}
+
+// SetInstanceID records the per-daemon instance id and persists. The id is meant
+// to be frozen after first resolution; callers enforce that invariant.
+func (s *State) SetInstanceID(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.InstanceID = id
+	return s.saveLocked()
 }

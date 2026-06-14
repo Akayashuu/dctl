@@ -15,6 +15,7 @@ import (
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/session"
+	"github.com/vskstudio/dctl/internal/state"
 )
 
 // discordMaxLen is Discord's hard per-message character limit.
@@ -38,6 +39,9 @@ type Options struct {
 	Interval     int
 	State        string
 	After        string
+	Participants string // append-only journal of message authors (empty = disabled)
+	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
+	Session      string // session name, used with AllowState to resolve the per-session allowlist
 	Verbose      bool
 	Progress     string // "off" | "actions" | "full" (default "full")
 	ProgressKeep bool   // keep the full running list instead of collapsing to a summary
@@ -100,6 +104,10 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	resp := session.NewResponder(ctx, o.Stream, o.Cmd, o.Model, oneShot)
 	defer resp.Close()
 
+	auth := &authorizer{o: o}
+	// Authors already journaled this run; skip the dedup-read for repeats.
+	seen := map[string]bool{}
+
 	for {
 		msgs, err := c.Read(ctx, ch, 100, last)
 		if err != nil {
@@ -112,6 +120,14 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			persist(o.State, last)
 			if m.Author.Bot {
 				continue // never answer a bot (incl. ourselves) → no loops
+			}
+			if !seen[m.Author.ID] {
+				seen[m.Author.ID] = true
+				recordParticipant(o.Participants, m.Author.ID)
+			}
+			if !auth.allowed(m.Author.ID) {
+				logf(o.Verbose, "skip <%s>: not on the allowlist for %q", m.Author.Username, o.Session)
+				continue // unauthorized author → observed but never drives the session
 			}
 			logf(o.Verbose, "<%s> %s", m.Author.Username, oneline(m.Content))
 			// Acknowledge immediately so the human sees the message was picked
@@ -186,6 +202,59 @@ func persist(path, id string) {
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	_ = os.WriteFile(path, []byte(id+"\n"), 0o644)
+}
+
+// recordParticipant best-effort appends a human author id to the journal so the
+// daemon can answer /session who. Errors are swallowed: observability must never
+// break the bridge loop.
+func recordParticipant(path, userID string) {
+	_, _ = state.AppendParticipant(path, userID)
+}
+
+// authorizer enforces the per-session allowlist (semantics B) for the bridge
+// loop, caching the parsed daemon state and reloading only when state.json
+// changes (mtime or size), so a busy channel doesn't re-read+parse the file on
+// every message. When AllowState is empty the bridge runs unguarded (standalone
+// use). Otherwise it is an access-control gate and fails CLOSED: an unreadable/
+// corrupt/missing state file denies rather than silently dropping enforcement.
+// Because saveLocked writes atomically (temp + rename), a changed allowlist
+// always lands a new mtime/size, so /session allow changes apply without a
+// restart. A missing session is not special-cased — SessionAllowed checks the
+// global allowlist first, so a globally-allowed admin still passes even if the
+// per-session entry is absent.
+type authorizer struct {
+	o       Options
+	loaded  bool
+	mod     time.Time
+	size    int64
+	st      *state.State
+	loadErr error
+}
+
+func (a *authorizer) allowed(userID string) bool {
+	if a.o.AllowState == "" {
+		return true
+	}
+	fi, err := os.Stat(a.o.AllowState)
+	if err != nil {
+		logf(a.o.Verbose, "allowlist: cannot stat %s (%v) — denying", a.o.AllowState, err)
+		return false
+	}
+	if !a.loaded || !fi.ModTime().Equal(a.mod) || fi.Size() != a.size {
+		a.st, a.loadErr = state.LoadState(a.o.AllowState)
+		a.mod, a.size, a.loaded = fi.ModTime(), fi.Size(), true
+	}
+	if a.loadErr != nil {
+		logf(a.o.Verbose, "allowlist: cannot read %s (%v) — denying", a.o.AllowState, a.loadErr)
+		return false
+	}
+	return a.st.SessionAllowed(a.o.Session, userID)
+}
+
+// authorized is the uncached single-shot form used in tests; the Run loop holds
+// a long-lived *authorizer so reads are cached across messages.
+func authorized(o Options, userID string) bool {
+	return (&authorizer{o: o}).allowed(userID)
 }
 
 // chunk splits s into pieces no longer than max, preferring to break on a
