@@ -31,9 +31,12 @@ func chromeLine(line string) bool {
 	if t == "" {
 		return false // blank handled by the blank-collapser, not dropped here
 	}
-	// Border / input-box frame: only box-drawing chars, spaces, and a leading
-	// prompt marker.
+	// Border / input-box frame: corner glyphs, or a line made up entirely of
+	// box-drawing/space runes (a bare horizontal rule has no corners).
 	if strings.ContainsAny(t, "╭╮╰╯┌┐└┘") {
+		return true
+	}
+	if strings.TrimLeft(t, "─│╭╮╰╯┌┐└┘ ") == "" {
 		return true
 	}
 	if strings.HasPrefix(t, "│") || strings.HasPrefix(t, ">") {
@@ -87,7 +90,10 @@ type quiesceCfg struct {
 
 // awaitQuiescence polls capture until the pane text is unchanged for cfg.stable
 // consecutive reads, then returns that text. It errors on timeout or a capture
-// error, or if ctx is cancelled.
+// error, or if ctx is cancelled. An empty capture never counts as settled: a
+// freshly created pane returns "" until the program paints its first frame, so
+// settling on it would baseline against a blank screen and leak the whole first
+// paint into the next turn's diff.
 func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg quiesceCfg) (string, error) {
 	deadline := time.Now().Add(cfg.timeout)
 	var last string
@@ -105,7 +111,7 @@ func awaitQuiescence(ctx context.Context, capture func() (string, error), cfg qu
 		} else {
 			same, last = 0, cur
 		}
-		if same >= cfg.stable {
+		if same >= cfg.stable && cur != "" {
 			return cur, nil
 		}
 		if time.Now().After(deadline) {
@@ -197,7 +203,11 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 		}
 	}
 	before := t.baseline
-	if out, err := tmuxRun("send-keys", "-t", t.sessName, "-l", m.Content); err != nil {
+	// Collapse embedded newlines to spaces: a literal newline sent to the TUI is
+	// read as Enter, which would submit the message early and desync the turn.
+	// A single coherent line is the v1 contract (see SKILL.md known limitation).
+	text := sanitizeInput(m.Content)
+	if out, err := tmuxRun("send-keys", "-t", t.sessName, "-l", text); err != nil {
 		return "", fmt.Errorf("tmux send-keys: %v: %s", err, out)
 	}
 	if out, err := tmuxRun("send-keys", "-t", t.sessName, "Enter"); err != nil {
@@ -214,6 +224,14 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 		reply = strings.TrimSpace(strings.Join(newLines(before, after), "\n"))
 	}
 	return reply, nil
+}
+
+// sanitizeInput flattens a message to a single line so send-keys -l never feeds
+// a newline (= Enter) into the TUI mid-message. CR/LF runs collapse to one space.
+func sanitizeInput(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return strings.Join(strings.Split(s, "\n"), " ")
 }
 
 func (t *tmuxResponder) Close() error {

@@ -11,13 +11,13 @@ import (
 
 func TestResponderSelection(t *testing.T) {
 	noop := func(ctx context.Context, m DctlMessage) (string, error) { return "x", nil }
-	if _, ok := NewResponder(context.Background(), "oneshot", "foo", "", "", "chan", noop).(*oneShotResponder); !ok {
+	if _, ok := NewResponder(context.Background(), "oneshot", "foo", "", "", "chan", 0, noop).(*oneShotResponder); !ok {
 		t.Fatal("oneshot backend should yield oneShotResponder")
 	}
-	if _, ok := NewResponder(context.Background(), "stream", "claude", "", "", "chan", noop).(*streamResponder); !ok {
+	if _, ok := NewResponder(context.Background(), "stream", "claude", "", "", "chan", 0, noop).(*streamResponder); !ok {
 		t.Fatal("stream backend should yield streamResponder")
 	}
-	if _, ok := NewResponder(context.Background(), "tmux", "claude", "", "/tmp", "chan", noop).(*tmuxResponder); !ok {
+	if _, ok := NewResponder(context.Background(), "tmux", "claude", "", "/tmp", "chan", 0, noop).(*tmuxResponder); !ok {
 		t.Fatal("tmux backend should yield tmuxResponder")
 	}
 }

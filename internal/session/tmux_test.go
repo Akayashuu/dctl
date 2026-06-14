@@ -34,6 +34,43 @@ func TestNewLines(t *testing.T) {
 	}
 }
 
+func TestSanitizeInput(t *testing.T) {
+	if got := sanitizeInput("one\ntwo\r\nthree\rfour"); got != "one two three four" {
+		t.Fatalf("sanitizeInput = %q, want %q", got, "one two three four")
+	}
+	if got := sanitizeInput("single line"); got != "single line" {
+		t.Fatalf("sanitizeInput should leave single lines untouched, got %q", got)
+	}
+}
+
+func TestStripChromeHorizontalRule(t *testing.T) {
+	in := []string{"────────────────", "kept line", "│ > x            │"}
+	got := stripChrome(in)
+	if strings.Join(got, "\n") != "kept line" {
+		t.Fatalf("stripChrome = %q, want %q", strings.Join(got, "\n"), "kept line")
+	}
+}
+
+func TestAwaitQuiescenceSkipsEmpty(t *testing.T) {
+	// Empty captures must never settle; once content appears and stabilizes it returns.
+	seq := []string{"", "", "", "hi", "hi", "hi"}
+	i := 0
+	capture := func() (string, error) {
+		s := seq[i]
+		if i < len(seq)-1 {
+			i++
+		}
+		return s, nil
+	}
+	got, err := awaitQuiescence(context.Background(), capture, quiesceCfg{stable: 2, poll: 0, timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "hi" {
+		t.Fatalf("awaitQuiescence settled on %q, want %q", got, "hi")
+	}
+}
+
 func TestStripChrome(t *testing.T) {
 	in := []string{
 		"╭────────────────────────╮",

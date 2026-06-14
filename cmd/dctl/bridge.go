@@ -38,7 +38,6 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	backend := fs.String("backend", "", "responder backend: stream | oneshot | tmux (default derived from --stream)")
 	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
 	fs.Parse(args)
-	_ = tmuxTimeout // parsed for forward-compat; v1 uses the baked-in default
 
 	return bridge.Run(ctx, c, bridge.Options{
 		Channel:      *ch,
@@ -56,6 +55,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		Progress:     *progress,
 		ProgressKeep: *progressKeep,
 		Backend:      *backend,
+		TmuxTimeout:  *tmuxTimeout,
 	})
 }
 

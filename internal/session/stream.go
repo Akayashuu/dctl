@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 // NewResponder selects the response strategy by backend:
@@ -18,12 +19,14 @@ import (
 //	"tmux"    — interactive claude TUI inside a tmux session, text relayed
 //
 // dir is the working directory (tmux/stream); channel seeds the tmux session name.
-func NewResponder(ctx context.Context, backend, cmdStr, model, dir, channel string, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
+// tmuxTimeout caps how long the tmux backend waits for a turn to settle (0 =
+// default); it is ignored by the other backends.
+func NewResponder(ctx context.Context, backend, cmdStr, model, dir, channel string, tmuxTimeout time.Duration, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
 	switch backend {
 	case "oneshot":
 		return &oneShotResponder{run: oneShot}
 	case "tmux":
-		return newTmuxResponder(tmuxSessionName(channel), dir, strings.Fields(cmdStr), model, 0)
+		return newTmuxResponder(tmuxSessionName(channel), dir, strings.Fields(cmdStr), model, tmuxTimeout)
 	default: // "stream"
 		r := &streamResponder{ctx: ctx, base: streamBase(strings.Fields(cmdStr)), model: model}
 		r.dir = dir

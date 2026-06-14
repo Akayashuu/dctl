@@ -58,7 +58,10 @@ The bridge can talk to Claude three ways:
   Launched with `--dangerously-skip-permissions`, so there are no permission
   prompts to answer yet (rendering prompts as Discord buttons is a future
   phase). Requires the `tmux` binary on PATH. You can `tmux attach -t
-  dctl-<channel>` to land in the same live session the bridge is driving.
+  dctl-<channel>` (or `dctl-<DCTL_INSTANCE_ID>-<channel>` when that env var is
+  set) to land in the same live session the bridge is driving. **Known limit:**
+  multi-line messages are flattened to one line before sending (a literal
+  newline would submit early); send separate messages for separate turns.
 
 From the daemon: `/session create name:foo backend:tmux` creates a tmux-backed
 session; the backend is persisted, so a daemon restart respawns it the same way.
