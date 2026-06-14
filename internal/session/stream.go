@@ -55,6 +55,29 @@ func streamBase(fields []string) []string {
 	return out
 }
 
+// withAttachments appends image attachment paths to a message body as plain
+// references so the local Claude can open them with its Read tool. Shared by
+// every backend (stream, tmux, one-shot) for consistent phrasing.
+func withAttachments(text string, paths []string) string {
+	if len(paths) == 0 {
+		return text
+	}
+	var b strings.Builder
+	b.WriteString(text)
+	if text != "" {
+		b.WriteString("\n\n")
+	}
+	for i, p := range paths {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("[Image jointe : ")
+		b.WriteString(p)
+		b.WriteByte(']')
+	}
+	return b.String()
+}
+
 // userLine marshals one Claude Code stream-json user message, newline-terminated
 // for writing to the process stdin.
 func userLine(text string) ([]byte, error) {
@@ -276,6 +299,9 @@ type DctlMessage struct {
 	Author    string
 	MessageID string
 	ChannelID string
+	// Attachments holds local filesystem paths to image files downloaded from
+	// the Discord message, ready for the session backend to reference.
+	Attachments []string
 }
 
 // oneShotResponder runs cmdStr fresh for every message (legacy behavior, used
@@ -310,7 +336,8 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage, onEvent fu
 		}
 		r.sess = s
 	}
-	tr, err := r.sess.Send(m.Content, onEvent)
+	content := withAttachments(m.Content, m.Attachments)
+	tr, err := r.sess.Send(content, onEvent)
 	if err != nil {
 		// Process likely died: restart with the last session id and retry once.
 		// Tell the consumer to discard any partial-turn events emitted before the
@@ -325,7 +352,7 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage, onEvent fu
 			return "", startErr
 		}
 		r.sess = s
-		if tr, err = r.sess.Send(m.Content, onEvent); err != nil {
+		if tr, err = r.sess.Send(content, onEvent); err != nil {
 			return "", err
 		}
 	}

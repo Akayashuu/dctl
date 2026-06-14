@@ -227,3 +227,17 @@ func TestReadTurnNilCallback(t *testing.T) {
 		t.Fatalf("text = %q, want ok", tr.Text)
 	}
 }
+
+func TestWithAttachments(t *testing.T) {
+	if got := withAttachments("hello", nil); got != "hello" {
+		t.Errorf("no attachments should pass text through, got %q", got)
+	}
+	got := withAttachments("look", []string{"/tmp/a.png", "/tmp/b.png"})
+	want := "look\n\n[Image jointe : /tmp/a.png]\n[Image jointe : /tmp/b.png]"
+	if got != want {
+		t.Errorf("withAttachments = %q, want %q", got, want)
+	}
+	if got := withAttachments("", []string{"/tmp/a.png"}); got != "[Image jointe : /tmp/a.png]" {
+		t.Errorf("empty text should not add leading newlines, got %q", got)
+	}
+}
