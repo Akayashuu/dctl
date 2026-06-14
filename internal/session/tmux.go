@@ -60,8 +60,38 @@ func chromeLine(line string) bool {
 // extractTurn turns a before/after scrollback pair into the clean text Claude
 // added this turn. Empty result means nothing new survived stripping.
 func extractTurn(before, after string) string {
-	lines := stripChrome(newLines(before, after))
+	lines := stripToolBlocks(stripChrome(newLines(before, after)))
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+// stripToolBlocks drops tool-call bullet lines (⏺/●) and their ⎿ continuation
+// lines, leaving only Claude's prose — the tools are already shown in the live
+// progress message, so the final reply need not repeat them.
+func stripToolBlocks(lines []string) []string {
+	var out []string
+	inTool := false
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.ContainsAny(firstRune(t), toolBullets) {
+			inTool = true
+			continue
+		}
+		if inTool && strings.HasPrefix(t, "⎿") {
+			continue // continuation/result of the tool above
+		}
+		inTool = false
+		out = append(out, l)
+	}
+	return out
+}
+
+// firstRune returns the first rune of s as a string ("" if empty), so a multibyte
+// bullet glyph can be tested with ContainsAny without indexing bytes.
+func firstRune(s string) string {
+	for _, r := range s {
+		return string(r)
+	}
+	return ""
 }
 
 // stripChrome drops chrome lines and collapses runs of blank lines, returning

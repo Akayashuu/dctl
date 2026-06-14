@@ -315,6 +315,16 @@ func TestAwaitQuiescenceOnFrame(t *testing.T) {
 	}
 }
 
+func TestExtractTurnStripsToolBlocks(t *testing.T) {
+	before := " ▐▛███▜▌  Claude Code\n> hi"
+	after := before + "\nI'll run the tests.\n⏺ Bash(npm test)\n  ⎿ 12 passed\n  ⎿ done\nAll green."
+	got := extractTurn(before, after)
+	want := "I'll run the tests.\nAll green."
+	if got != want {
+		t.Fatalf("extractTurn = %q, want %q", got, want)
+	}
+}
+
 var n int
 
 func changing() string { n++; return strings.Repeat("x", n) }
