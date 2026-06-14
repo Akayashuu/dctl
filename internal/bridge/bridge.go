@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/internal/control"
 	"github.com/vskstudio/dctl/internal/session"
 	"github.com/vskstudio/dctl/internal/state"
 )
@@ -31,23 +32,24 @@ const (
 
 // Options configures one bridge run (parsed from CLI flags by cmd/dctl).
 type Options struct {
-	Channel      string
-	Cmd          string
-	Stream       bool
-	Model        string
-	Ensure       string
-	Interval     int
-	State        string
-	After        string
-	Participants string // append-only journal of message authors (empty = disabled)
-	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
-	Session      string // session name, used with AllowState to resolve the per-session allowlist
-	Verbose      bool
-	Progress     string        // "off" | "actions" | "full" (default "full")
-	ProgressKeep bool          // keep the full running list instead of collapsing to a summary
-	Backend      string        // "stream" | "oneshot" | "tmux" (empty → derived from Stream)
-	TmuxTimeout  time.Duration // tmux backend: max wait for a turn to settle (0 = default)
-	InitPrompts  []string      // tmux backend: priming messages typed once after the pane settles
+	Channel       string
+	Cmd           string
+	Stream        bool
+	Model         string
+	Ensure        string
+	Interval      int
+	State         string
+	After         string
+	Participants  string // append-only journal of message authors (empty = disabled)
+	AllowState    string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
+	Session       string // session name, used with AllowState to resolve the per-session allowlist
+	Verbose       bool
+	Progress      string        // "off" | "actions" | "full" (default "full")
+	ProgressKeep  bool          // keep the full running list instead of collapsing to a summary
+	Backend       string        // "stream" | "oneshot" | "tmux" (empty → derived from Stream)
+	TmuxTimeout   time.Duration // tmux backend: max wait for a turn to settle (0 = default)
+	InitPrompts   []string      // tmux backend: priming messages typed once after the pane settles
+	ControlSocket string        // tmux backend: unix socket the daemon forwards select-menu clicks to (empty = numeric-reply fallback only)
 }
 
 // resolveBackend picks the responder backend. An explicit backend always wins.
@@ -140,6 +142,31 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	resp := session.NewResponder(ctx, backend, o.Cmd, o.Model, "", ch, o.TmuxTimeout, o.InitPrompts, oneShot)
 	defer resp.Close()
 
+	// Control channel: when set (daemon mode), the daemon forwards select-menu
+	// clicks here and we type the picked value into the pane, posting whatever it
+	// produces. Best-effort: a socket that fails to bind just disables the menu
+	// path, leaving the numeric-reply fallback intact.
+	if inj, ok := resp.(session.ChoiceInjector); ok && o.ControlSocket != "" {
+		if srv, err := control.Listen(o.ControlSocket); err != nil {
+			logf(true, "control socket %s: %v — select menus disabled", o.ControlSocket, err)
+			o.ControlSocket = ""
+		} else {
+			defer srv.Close()
+			go func() {
+				for v := range srv.Values() {
+					logf(o.Verbose, "choice pick %q", v)
+					out, err := inj.InjectChoice(ctx, v)
+					if err != nil {
+						logf(true, "inject choice %q: %v", v, err)
+					}
+					if out = strings.TrimSpace(out); out != "" {
+						postResult(ctx, c, ch, "", out, resp, o)
+					}
+				}
+			}()
+		}
+	}
+
 	auth := &authorizer{o: o}
 	// Authors already journaled this run; skip the dedup-read for repeats.
 	seen := map[string]bool{}
@@ -199,11 +226,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 				_ = c.React(ctx, ch, m.ID, failEmoji)
 				continue
 			}
-			for _, chunk := range chunk(out, discordMaxLen) {
-				if _, err := c.Reply(ctx, ch, m.ID, chunk); err != nil {
-					logf(true, "reply error: %v", err)
-				}
-			}
+			postResult(ctx, c, ch, m.ID, out, resp, o)
 			if pv != nil {
 				pv.finish(err != nil)
 			}
@@ -212,6 +235,41 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			_ = c.React(ctx, ch, m.ID, doneEmoji)
 		}
 		time.Sleep(time.Duration(o.Interval) * time.Second)
+	}
+}
+
+// postResult delivers a turn's output to the channel. When the pane is left
+// waiting on a choice prompt and a control socket is wired (daemon mode), it
+// posts the rendered options as a native select menu whose clicks route back via
+// ControlSocket; otherwise it chunks the text and replies (or sends, when there
+// is no human message to thread under — e.g. output from an injected pick). A
+// failed menu post degrades to the plain-text path so a turn is never dropped.
+func postResult(ctx context.Context, c *dctl.Client, ch, replyTo, out string, resp session.Responder, o Options) {
+	if o.ControlSocket != "" {
+		if ca, ok := resp.(session.ChoiceAware); ok {
+			if pc, has := ca.PendingChoice(); has {
+				opts := make([]dctl.SelectOption, 0, len(pc.Options))
+				for _, it := range pc.Options {
+					opts = append(opts, dctl.SelectOption{Label: it.Label, Value: it.Value})
+				}
+				if _, err := c.SendChoiceMenu(ctx, ch, replyTo, out, dctl.ChoiceCustomID(o.Session), opts); err != nil {
+					logf(true, "choice menu post error: %v — falling back to text", err)
+				} else {
+					return
+				}
+			}
+		}
+	}
+	for _, part := range chunk(out, discordMaxLen) {
+		var err error
+		if replyTo != "" {
+			_, err = c.Reply(ctx, ch, replyTo, part)
+		} else {
+			_, err = c.Send(ctx, ch, part)
+		}
+		if err != nil {
+			logf(true, "reply error: %v", err)
+		}
 	}
 }
 
