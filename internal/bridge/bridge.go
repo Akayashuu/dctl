@@ -43,8 +43,8 @@ type Options struct {
 	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
 	Session      string // session name, used with AllowState to resolve the per-session allowlist
 	Verbose      bool
-	Progress     string // "off" | "actions" | "full" (default "full")
-	ProgressKeep bool   // keep the full running list instead of collapsing to a summary
+	Progress     string        // "off" | "actions" | "full" (default "full")
+	ProgressKeep bool          // keep the full running list instead of collapsing to a summary
 	Backend      string        // "stream" | "oneshot" | "tmux" (empty → derived from Stream)
 	TmuxTimeout  time.Duration // tmux backend: max wait for a turn to settle (0 = default)
 }
