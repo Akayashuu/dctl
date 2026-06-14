@@ -253,10 +253,22 @@ func (t *tmuxResponder) start(ctx context.Context) error {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		return fmt.Errorf("tmux not found on PATH: %w", err)
 	}
-	// A leftover session from a previous crash would make new-session fail with
-	// "duplicate session". Best-effort kill any stale namesake first so we always
-	// start from a clean, freshly-launched pane.
-	_, _ = tmuxRun("kill-session", "-t", t.sessName)
+	// Reattach to a live namesake instead of recreating it. An in-place dctl
+	// update restarts the bridge process, but the tmux session — and Claude's
+	// hot context inside it — keeps running independently. has-session succeeds
+	// only when such a pane is still alive (a crashed Claude exits its pane,
+	// which ends the session, so has-session then fails and we create afresh
+	// below). Adopt the survivor by baselining on its current pane and skip
+	// priming so the conversation continues uninterrupted.
+	if _, err := tmuxRun("has-session", "-t", t.sessName); err == nil {
+		settled, err := t.capturePoll(ctx, nil)
+		if err != nil {
+			return err
+		}
+		t.baseline = settled
+		t.started = true
+		return nil
+	}
 
 	// Pin the working directory explicitly. new-session without -c inherits the
 	// tmux *server* cwd (a long-lived daemon that may already run elsewhere), not
@@ -493,10 +505,11 @@ func (t *tmuxResponder) typeText(ctx context.Context, text string) error {
 func (t *tmuxResponder) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	// Best-effort and unconditional: kill the namesake even if start() failed
-	// after new-session (settled poll errored) so a half-started pane is never
-	// leaked. A no-op when nothing is there.
-	_, _ = tmuxRun("kill-session", "-t", t.sessName)
+	// Deliberately does NOT kill the tmux session: it must outlive this bridge
+	// process so an in-place dctl update (which restarts the bridge) keeps
+	// Claude's context hot — the next start() reattaches via has-session.
+	// Genuine teardown is explicit, via KillTmuxSession from the session-close
+	// handler.
 	t.started = false
 	return nil
 }
@@ -510,6 +523,14 @@ func tmuxSessionName(channel string) string {
 		name = "dctl-" + inst + "-" + channel
 	}
 	return sanitizeSessionName(name)
+}
+
+// KillTmuxSession terminates the persistent pane for channel. It exists because
+// Close() now deliberately leaves the session running across bridge restarts, so
+// genuine teardown (a /session close) must reap it explicitly. Best-effort: a
+// no-op when no such session exists. Safe to call for non-tmux backends.
+func KillTmuxSession(channel string) {
+	_, _ = tmuxRun("kill-session", "-t", tmuxSessionName(channel))
 }
 
 // sanitizeSessionName folds characters tmux rejects in a session name ("." and

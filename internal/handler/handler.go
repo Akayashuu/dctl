@@ -12,6 +12,7 @@ import (
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/forge"
+	"github.com/vskstudio/dctl/internal/session"
 	"github.com/vskstudio/dctl/internal/state"
 )
 
@@ -603,6 +604,9 @@ func (h *Handler) sessionClose(ctx context.Context, in dctl.Interaction) dctl.Re
 		return errf("no session %q", name)
 	}
 	_ = h.sup.Stop(name)
+	// Reap the persistent tmux pane: the bridge's Close() leaves it running so it
+	// survives dctl updates, so a real close must kill it explicitly.
+	session.KillTmuxSession(sess.ChannelID)
 	if sess.Worktree != "" {
 		force := in.Data.OptBool("force")
 		repo := repoFor(h.st.WorkspaceRoot(), sess.Project)
