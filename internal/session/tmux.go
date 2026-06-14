@@ -42,6 +42,13 @@ func chromeLine(line string) bool {
 	return false
 }
 
+// extractTurn turns a before/after scrollback pair into the clean text Claude
+// added this turn. Empty result means nothing new survived stripping.
+func extractTurn(before, after string) string {
+	lines := stripChrome(newLines(before, after))
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
 // stripChrome drops chrome lines and collapses runs of blank lines, returning
 // the cleaned prose lines with no leading/trailing blanks.
 func stripChrome(lines []string) []string {

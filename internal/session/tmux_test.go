@@ -1,6 +1,7 @@
 package session
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -32,5 +33,17 @@ func TestStripChrome(t *testing.T) {
 	want := "Here is your answer.\nIt spans two lines."
 	if strings.Join(got, "\n") != want {
 		t.Fatalf("stripChrome =\n%q\nwant\n%q", strings.Join(got, "\n"), want)
+	}
+}
+
+func TestExtractTurn(t *testing.T) {
+	before := " ▐▛███▜▌  Claude Code\n ▝▜█████▛▘\n> what is 2+2\n"
+	after, err := os.ReadFile("testdata/claude_done.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := extractTurn(before, string(after))
+	if got != "2 + 2 = 4." {
+		t.Fatalf("extractTurn = %q, want %q", got, "2 + 2 = 4.")
 	}
 }
