@@ -33,6 +33,16 @@ func TestParseToolEvents(t *testing.T) {
 			in:   "⏺ TodoWrite",
 			want: []toolEvent{{Tool: "TodoWrite", Detail: ""}},
 		},
+		{
+			name: "bare bullet, no name",
+			in:   "⏺",
+			want: nil,
+		},
+		{
+			name: "indented tool line",
+			in:   "  ⏺ Bash(ls)",
+			want: []toolEvent{{Tool: "Bash", Detail: "ls"}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
