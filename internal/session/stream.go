@@ -67,6 +67,41 @@ type turnResult struct {
 	ErrMsg    string
 }
 
+// Event is one intermediate stream occurrence surfaced to a progress consumer.
+type Event struct {
+	Kind    string  // "tool" | "text" | "result" | "reset"
+	Tool    string  // tool name (Kind == "tool")
+	Detail  string  // tool: salient input field; text: the assistant text
+	Cost    float64 // Kind == "result": total_cost_usd
+	IsError bool    // Kind == "result"
+}
+
+// contentBlock is one block of an assistant message's content array.
+type contentBlock struct {
+	Type  string          `json:"type"` // "text" | "tool_use" | "thinking" | ...
+	Text  string          `json:"text"`
+	Name  string          `json:"name"`  // tool name (tool_use)
+	Input json.RawMessage `json:"input"` // tool input (tool_use)
+}
+
+// toolDetail extracts the most informative single field from a tool's input
+// (command for Bash, file_path for Read/Edit, etc.) for a one-line summary.
+func toolDetail(input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal(input, &m) != nil {
+		return ""
+	}
+	for _, k := range []string{"command", "file_path", "path", "pattern", "query", "url", "description", "prompt"} {
+		if s, ok := m[k].(string); ok && s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
 // streamEvent is the subset of a stream-json line we care about. The `result`
 // event terminates a turn and carries the final assembled text + cost.
 type streamEvent struct {
@@ -75,28 +110,50 @@ type streamEvent struct {
 	IsError      bool    `json:"is_error"`
 	Result       string  `json:"result"`
 	TotalCostUSD float64 `json:"total_cost_usd"`
+	Message      struct {
+		Content []contentBlock `json:"content"`
+	} `json:"message"`
 }
 
-// readTurn consumes stream-json events until the terminal `result` event,
-// ignoring everything else. It uses ReadBytes (not bufio.Scanner) because the
-// system/init event embeds the full skill injection and can exceed Scanner's
-// 64 KB token cap.
-func readTurn(r *bufio.Reader) (turnResult, error) {
+// readTurn consumes stream-json events until the terminal `result` event. When
+// onEvent is non-nil it emits an Event per intermediate assistant block (tool
+// uses and text) and a terminal "result" event carrying cost. It uses ReadBytes
+// (not bufio.Scanner) because the system/init event can exceed Scanner's 64 KB cap.
+func readTurn(r *bufio.Reader, onEvent func(Event)) (turnResult, error) {
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(line) > 0 {
 			var ev streamEvent
-			if json.Unmarshal(line, &ev) == nil && ev.Type == "result" {
-				tr := turnResult{
-					Text:      ev.Result,
-					CostUSD:   ev.TotalCostUSD,
-					SessionID: ev.SessionID,
-					IsError:   ev.IsError,
+			if json.Unmarshal(line, &ev) == nil {
+				switch ev.Type {
+				case "assistant":
+					if onEvent != nil {
+						for _, b := range ev.Message.Content {
+							switch b.Type {
+							case "text":
+								if t := strings.TrimSpace(b.Text); t != "" {
+									onEvent(Event{Kind: "text", Detail: t})
+								}
+							case "tool_use":
+								onEvent(Event{Kind: "tool", Tool: b.Name, Detail: toolDetail(b.Input)})
+							}
+						}
+					}
+				case "result":
+					if onEvent != nil {
+						onEvent(Event{Kind: "result", Cost: ev.TotalCostUSD, IsError: ev.IsError})
+					}
+					tr := turnResult{
+						Text:      ev.Result,
+						CostUSD:   ev.TotalCostUSD,
+						SessionID: ev.SessionID,
+						IsError:   ev.IsError,
+					}
+					if ev.IsError {
+						tr.ErrMsg = ev.Result
+					}
+					return tr, nil
 				}
-				if ev.IsError {
-					tr.ErrMsg = ev.Result
-				}
-				return tr, nil
 			}
 		}
 		if err != nil {
@@ -166,9 +223,10 @@ func startStreamSession(ctx context.Context, base []string, model, resumeID, dir
 	return s, nil
 }
 
-// Send writes one user message and reads back the full assistant turn. An error
-// means the stream closed (process died) — the caller should restart.
-func (s *streamSession) Send(text string) (turnResult, error) {
+// Send writes one user message and reads back the full assistant turn, emitting
+// intermediate events to onEvent (nil = none). An error means the stream closed
+// (process died) — the caller should restart.
+func (s *streamSession) Send(text string, onEvent func(Event)) (turnResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	line, err := userLine(text)
@@ -178,7 +236,7 @@ func (s *streamSession) Send(text string) (turnResult, error) {
 	if _, err := s.stdin.Write(line); err != nil {
 		return turnResult{}, err
 	}
-	tr, err := readTurn(s.out)
+	tr, err := readTurn(s.out, onEvent)
 	if err != nil {
 		return tr, err
 	}
@@ -188,10 +246,11 @@ func (s *streamSession) Send(text string) (turnResult, error) {
 	return tr, nil
 }
 
-// Responder turns one Discord message into a reply string. Two implementations:
-// a persistent stream-json claude session, or a per-message one-shot command.
+// Responder turns one Discord message into a reply string, optionally emitting
+// intermediate progress events. Two implementations: a persistent stream-json
+// claude session, or a per-message one-shot command.
 type Responder interface {
-	Respond(ctx context.Context, m DctlMessage) (string, error)
+	Respond(ctx context.Context, m DctlMessage, onEvent func(Event)) (string, error)
 	Close() error
 }
 
@@ -210,7 +269,7 @@ type oneShotResponder struct {
 	run func(ctx context.Context, m DctlMessage) (string, error)
 }
 
-func (o *oneShotResponder) Respond(ctx context.Context, m DctlMessage) (string, error) {
+func (o *oneShotResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
 	return o.run(ctx, m)
 }
 func (o *oneShotResponder) Close() error { return nil }
@@ -226,7 +285,7 @@ type streamResponder struct {
 	sess  *streamSession
 }
 
-func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, error) {
+func (r *streamResponder) Respond(ctx context.Context, m DctlMessage, onEvent func(Event)) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.sess == nil {
@@ -236,9 +295,14 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, e
 		}
 		r.sess = s
 	}
-	tr, err := r.sess.Send(m.Content)
+	tr, err := r.sess.Send(m.Content, onEvent)
 	if err != nil {
 		// Process likely died: restart with the last session id and retry once.
+		// Tell the consumer to discard any partial-turn events emitted before the
+		// crash so the retried turn isn't double-counted.
+		if onEvent != nil {
+			onEvent(Event{Kind: "reset"})
+		}
 		resume := r.sess.sessID
 		_ = r.sess.Close()
 		s, startErr := startStreamSession(r.ctx, r.base, r.model, resume, r.dir)
@@ -246,7 +310,7 @@ func (r *streamResponder) Respond(ctx context.Context, m DctlMessage) (string, e
 			return "", startErr
 		}
 		r.sess = s
-		if tr, err = r.sess.Send(m.Content); err != nil {
+		if tr, err = r.sess.Send(m.Content, onEvent); err != nil {
 			return "", err
 		}
 	}

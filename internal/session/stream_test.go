@@ -73,7 +73,6 @@ func TestStreamBaseStripsLegacyFlags(t *testing.T) {
 }
 
 func TestStreamSessionSend(t *testing.T) {
-	// Fake "process": reads one user line from stdin, replies with a canned result.
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
 	go func() {
@@ -82,13 +81,15 @@ func TestStreamSessionSend(t *testing.T) {
 			return
 		}
 		io.WriteString(stdoutW,
-			`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"+
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}`+"\n"+
+				`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"+
 				`{"type":"result","subtype":"success","is_error":false,"result":"hello back","total_cost_usd":0.002,"session_id":"abc"}`+"\n")
 		stdoutW.Close()
 	}()
 
 	s := newStreamSession(stdinW, stdoutR)
-	tr, err := s.Send("hello")
+	var got []Event
+	tr, err := s.Send("hello", func(e Event) { got = append(got, e) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +98,9 @@ func TestStreamSessionSend(t *testing.T) {
 	}
 	if s.sessID != "abc" {
 		t.Fatalf("session id not recorded: %q", s.sessID)
+	}
+	if len(got) < 1 || got[0].Kind != "tool" || got[0].Tool != "Bash" {
+		t.Fatalf("expected a Bash tool event, got %+v", got)
 	}
 }
 
@@ -131,7 +135,7 @@ func TestReadTurnSuccess(t *testing.T) {
 		`{"type":"result","subtype":"success","is_error":false,"result":"PONG","total_cost_usd":0.0136,"session_id":"sess-1"}`,
 	}, "\n") + "\n"
 
-	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)))
+	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +155,7 @@ func TestReadTurnSuccess(t *testing.T) {
 
 func TestReadTurnError(t *testing.T) {
 	canned := `{"type":"result","subtype":"error_during_execution","is_error":true,"result":"boom","session_id":"s"}` + "\n"
-	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)))
+	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,9 +171,54 @@ func TestReadTurnHandlesHugeLine(t *testing.T) {
 	huge := strings.Repeat("x", 200_000)
 	canned := `{"type":"system","subtype":"init","session_id":"s","blob":"` + huge + `"}` + "\n" +
 		`{"type":"result","subtype":"success","is_error":false,"result":"ok","session_id":"s"}` + "\n"
-	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)))
+	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)), nil)
 	if err != nil {
 		t.Fatalf("huge line should not error: %v", err)
+	}
+	if tr.Text != "ok" {
+		t.Fatalf("text = %q, want ok", tr.Text)
+	}
+}
+
+func TestReadTurnEmitsEvents(t *testing.T) {
+	canned := strings.Join([]string{
+		`{"type":"system","subtype":"init","session_id":"s"}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"je regarde"}]},"session_id":"s"}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"git status"}}]},"session_id":"s"}`,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"stream.go"}}]},"session_id":"s"}`,
+		`{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.04,"session_id":"s"}`,
+	}, "\n") + "\n"
+
+	var got []Event
+	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)), func(e Event) { got = append(got, e) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Text != "done" {
+		t.Fatalf("text = %q, want done", tr.Text)
+	}
+	want := []Event{
+		{Kind: "text", Detail: "je regarde"},
+		{Kind: "tool", Tool: "Bash", Detail: "git status"},
+		{Kind: "tool", Tool: "Read", Detail: "stream.go"},
+		{Kind: "result", Cost: 0.04, IsError: false},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d events, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("event[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestReadTurnNilCallback(t *testing.T) {
+	canned := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"x"}}]}}` + "\n" +
+		`{"type":"result","is_error":false,"result":"ok","session_id":"s"}` + "\n"
+	tr, err := readTurn(bufio.NewReader(strings.NewReader(canned)), nil)
+	if err != nil {
+		t.Fatalf("nil callback must not panic: %v", err)
 	}
 	if tr.Text != "ok" {
 		t.Fatalf("text = %q, want ok", tr.Text)

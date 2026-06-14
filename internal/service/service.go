@@ -39,6 +39,7 @@ type Config struct {
 	EnvFile    string   // path to the secrets env file (mode 0600)
 	HealthAddr string   // --health-addr value; "" omits the flag
 	ExtraArgs  []string // extra args appended to `dctl serve`
+	SkipStart  bool     // configure boot-start but don't start now (e.g. token not set yet)
 }
 
 // FileWrite is one file the plan writes. Template files are written only when
@@ -71,9 +72,14 @@ func goos(c Config) string {
 	return runtime.GOOS
 }
 
-// serveArgs builds the `serve …` argv the service runs.
+// serveArgs builds the `serve …` argv the service runs. The daemon loads its
+// own secrets via --env-file (no shell sourcing), so the env file is passed as
+// a plain argument on every platform.
 func serveArgs(c Config) []string {
 	args := []string{"serve"}
+	if c.EnvFile != "" {
+		args = append(args, "--env-file", c.EnvFile)
+	}
 	if c.HealthAddr != "" {
 		args = append(args, "--health-addr", c.HealthAddr)
 	}
@@ -154,18 +160,30 @@ func linuxPlan(c Config) Plan {
 	content := "[Unit]\n" +
 		"Description=dctl Discord daemon\n" +
 		"After=network-online.target\n" +
-		"Wants=network-online.target\n\n" +
+		"Wants=network-online.target\n" +
+		// Don't retry forever if the daemon keeps failing (e.g. a bad token):
+		// give up after 5 failures in 60s rather than spin indefinitely. These
+		// live in [Unit] in modern systemd, not [Service].
+		"StartLimitIntervalSec=60\n" +
+		"StartLimitBurst=5\n\n" +
 		"[Service]\n" +
 		"Type=simple\n" +
-		"EnvironmentFile=-" + c.EnvFile + "\n" + // leading '-' => optional (no boot failure if absent)
-		"ExecStart=" + quoteArgv(c.BinPath, serveArgs(c)) + "\n" +
+		// The daemon loads the env file itself (serve --env-file), so the unit
+		// needs no EnvironmentFile and the token never appears here.
+		"ExecStart=" + joinQuoted(systemdQuote, c.BinPath, serveArgs(c)) + "\n" +
 		"Restart=always\n" +
 		"RestartSec=3\n\n" +
 		"[Install]\n" +
 		"WantedBy=default.target\n"
 	cmds := []Command{
 		{Argv: []string{"systemctl", "--user", "daemon-reload"}},
-		{Argv: []string{"systemctl", "--user", "enable", "--now", linuxUnitName}},
+	}
+	if c.SkipStart {
+		// Enable at boot but don't start now: with no token the daemon exits
+		// immediately and Restart=always would crash-loop until it's filled in.
+		cmds = append(cmds, Command{Argv: []string{"systemctl", "--user", "enable", linuxUnitName}})
+	} else {
+		cmds = append(cmds, Command{Argv: []string{"systemctl", "--user", "enable", "--now", linuxUnitName}})
 	}
 	if c.User != "" {
 		// Linger lets the user service keep running after logout / at boot.
@@ -174,53 +192,63 @@ func linuxPlan(c Config) Plan {
 	return Plan{
 		Files:    []FileWrite{{Path: unit, Content: content, Mode: 0o644}, envFileWrite(c)},
 		Commands: cmds,
-		Notes:    []string{"Edit " + c.EnvFile + " with your token, then: systemctl --user restart " + linuxUnitName},
+		Notes:    []string{startNote(c, "systemctl --user start "+linuxUnitName)},
 	}
 }
 
 func macPlan(c Config) Plan {
 	plist := filepath.Join(c.Home, "Library", "LaunchAgents", macLabel+".plist")
 	logPath := filepath.Join(c.Home, ".local", "state", "dctl", "dctl.log")
-	// launchd has no EnvironmentFile, so the program sources the env file in a
-	// login shell before exec'ing dctl — keeps the token out of the plist.
-	run := "set -a; [ -f '" + c.EnvFile + "' ] && . '" + c.EnvFile + "'; exec " +
-		quoteArgv(c.BinPath, serveArgs(c))
+	// No shell: launchd execs dctl directly and the daemon loads the env file
+	// itself (serve --env-file). Each argument is its own array element, so
+	// spaces never split a token — just XML-escape each one.
+	argv := append([]string{c.BinPath}, serveArgs(c)...)
+	var progArgs strings.Builder
+	for _, a := range argv {
+		progArgs.WriteString("    <string>" + xmlEscape(a) + "</string>\n")
+	}
 	content := xmlHeader +
 		"<plist version=\"1.0\">\n<dict>\n" +
 		"  <key>Label</key><string>" + macLabel + "</string>\n" +
 		"  <key>ProgramArguments</key>\n  <array>\n" +
-		"    <string>/bin/sh</string>\n    <string>-lc</string>\n    <string>" + xmlEscape(run) + "</string>\n" +
+		progArgs.String() +
 		"  </array>\n" +
 		"  <key>RunAtLoad</key><true/>\n" +
 		"  <key>KeepAlive</key><true/>\n" +
 		"  <key>StandardOutPath</key><string>" + logPath + "</string>\n" +
 		"  <key>StandardErrorPath</key><string>" + logPath + "</string>\n" +
 		"</dict>\n</plist>\n"
+	cmds := []Command{
+		{Argv: []string{"launchctl", "unload", "-w", plist}, IgnoreErr: true},
+	}
+	if !c.SkipStart {
+		// Skipped when no token yet: loading would start the agent, which exits
+		// immediately and KeepAlive would respawn it. RunAtLoad still starts it
+		// at the next login once the token is in place.
+		cmds = append(cmds, Command{Argv: []string{"launchctl", "load", "-w", plist}})
+	}
 	return Plan{
-		Files: []FileWrite{{Path: plist, Content: content, Mode: 0o644}, envFileWrite(c)},
-		Commands: []Command{
-			{Argv: []string{"launchctl", "unload", "-w", plist}, IgnoreErr: true},
-			{Argv: []string{"launchctl", "load", "-w", plist}},
-		},
-		Notes: []string{"Edit " + c.EnvFile + " with your token, then: launchctl kickstart -k gui/$(id -u)/" + macLabel},
+		Files:    []FileWrite{{Path: plist, Content: content, Mode: 0o644}, envFileWrite(c)},
+		Commands: cmds,
+		Notes:    []string{startNote(c, "launchctl load -w "+plist)},
 	}
 }
 
 func windowsPlan(c Config) Plan {
 	launcher := filepath.Join(c.Home, "AppData", "Local", "dctl", "dctl-serve.cmd")
-	// A .cmd launcher loads the env file (KEY=VALUE lines) then runs dctl, so the
-	// scheduled task never carries the token itself.
+	// A tiny .cmd launcher just execs dctl; the daemon loads the env file itself
+	// (serve --env-file), so there's no brittle `for /f` parsing and the task
+	// never carries the token. (schtasks /tr can't quote argv reliably, hence
+	// the wrapper file.)
 	content := "@echo off\r\n" +
-		"if exist \"" + c.EnvFile + "\" (\r\n" +
-		"  for /f \"usebackq eol=# tokens=1,* delims==\" %%a in (\"" + c.EnvFile + "\") do set \"%%a=%%b\"\r\n" +
-		")\r\n" +
-		"\"" + c.BinPath + "\" " + strings.Join(serveArgs(c), " ") + "\r\n"
+		joinQuoted(cmdQuote, c.BinPath, serveArgs(c)) + "\r\n"
 	return Plan{
 		Files: []FileWrite{{Path: launcher, Content: content, Mode: 0o644}, envFileWrite(c)},
 		Commands: []Command{
 			{Argv: []string{"schtasks", "/create", "/tn", winTaskName, "/tr", launcher, "/sc", "onlogon", "/rl", "limited", "/f"}},
 		},
-		Notes: []string{"Edit " + c.EnvFile + " with your token, then re-run or reboot to start the task."},
+		// A logon-scheduled task only runs at the next sign-in, never on install.
+		Notes: []string{"Edit " + c.EnvFile + " with your token; the task runs dctl at your next logon (or run it now: schtasks /run /tn " + winTaskName + ")."},
 	}
 }
 
@@ -233,17 +261,74 @@ func xmlEscape(s string) string {
 	return r.Replace(s)
 }
 
+// startNote returns the human-facing follow-up after an install: how to start
+// the service once the token is in place (when start was skipped), or where its
+// secrets live (when it's already running).
+func startNote(c Config, startCmd string) string {
+	if c.SkipStart {
+		return "installed and enabled at boot, but NOT started — set DISCORD_BOT_TOKEN in " +
+			c.EnvFile + ", then: " + startCmd
+	}
+	return "running. Secrets live in " + c.EnvFile + "; edit it and restart to change them."
+}
+
+// envFileHasToken reports whether the env file already carries a non-empty
+// DISCORD_BOT_TOKEN, so install can start the service immediately instead of
+// configuring a crash-loop with an empty template.
+func envFileHasToken(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok &&
+			strings.TrimSpace(k) == "DISCORD_BOT_TOKEN" && strings.TrimSpace(v) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // quoteArgv joins a binary path and its args for an ExecStart line, quoting the
-// binary path if it contains spaces (systemd/sh both accept double quotes).
-func quoteArgv(bin string, args []string) string {
-	b := bin
-	if strings.ContainsAny(bin, " \t") {
-		b = "\"" + bin + "\""
+// command line, applying quote to the binary and every argument so a path or
+// value containing spaces or metacharacters survives the target's parser.
+func joinQuoted(quote func(string) string, bin string, args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, quote(bin))
+	for _, a := range args {
+		parts = append(parts, quote(a))
 	}
-	if len(args) == 0 {
-		return b
+	return strings.Join(parts, " ")
+}
+
+// systemdQuote quotes a token for a systemd ExecStart line. systemd splits on
+// whitespace unless double-quoted, and treats backslash as an escape inside the
+// quotes, so spaces/quotes/backslashes must be wrapped and escaped.
+func systemdQuote(s string) string {
+	if s == "" {
+		return `""`
 	}
-	return b + " " + strings.Join(args, " ")
+	if !strings.ContainsAny(s, " \t\n\"\\'") {
+		return s
+	}
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(s) + `"`
+}
+
+// cmdQuote double-quotes a token for cmd.exe when it contains a space, tab or
+// quote (doubling embedded quotes), so a "Program Files" path stays one token.
+func cmdQuote(s string) string {
+	if s == "" {
+		return `""`
+	}
+	if !strings.ContainsAny(s, " \t\"") {
+		return s
+	}
+	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
 // DefaultConfig fills a Config from the current environment (binary path, home,
@@ -273,6 +358,11 @@ func DefaultConfig() (Config, error) {
 // Install runs the install plan for the current OS: it writes the unit/launcher
 // and secrets template, then enables and starts the service.
 func Install(ctx context.Context, c Config) error {
+	// Without a token the daemon exits immediately; starting it now would just
+	// crash-loop until the user edits the template. Configure boot-start only.
+	if !envFileHasToken(c.EnvFile) {
+		c.SkipStart = true
+	}
 	p, err := BuildPlan(c)
 	if err != nil {
 		return err

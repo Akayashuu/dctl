@@ -10,8 +10,18 @@ One library, two consumers:
 - **Go package `github.com/vskstudio/dctl`** — embedded in services (e.g. the
   prospector backend) for sending and for notification fan-out.
 
-Mono-server by design: one bot token + one default channel. REST only (no
-gateway), so every call is on-demand HTTP.
+Mono-server by design: one bot token + one default channel. Every CLI verb is a
+single on-demand REST call (no gateway, no daemon) — except `dctl serve`, an
+opt-in always-on Gateway daemon that keeps the bot online 24/7 and adds slash
+commands (see [Daemon](#daemon-always-on-bot--slash-commands)).
+
+## Contents
+
+- [Install](#install) · [Config](#config-env) · [CLI](#cli)
+- [Bind a Claude session to a channel](#bind-a-claude-session-to-a-channel) (`bridge`)
+- [Daemon: always-on bot + slash commands](#daemon-always-on-bot--slash-commands) (`serve`)
+- [Run the daemon at boot (cross-OS)](#run-the-daemon-at-boot-cross-os) (`service`)
+- [Library](#library) · [Channels](#channels)
 
 ## Install
 
@@ -25,10 +35,18 @@ go install github.com/vskstudio/dctl/cmd/dctl@latest
 |-----|----------|---------|
 | `DISCORD_BOT_TOKEN` | yes | Bot token, sent as `Authorization: Bot …`. Never commit it. |
 | `DISCORD_CHANNEL_ID` | no | Default channel; override per-call with `-c/--channel`. |
+| `DCTL_OWNER_ID` | serve | Discord user id seeded into the daemon's slash-command allowlist. |
+| `DCTL_STATE_DIR` | no | Daemon state directory (default `~/.config/dctl`). |
+
+Every variable above can instead live in an env file loaded by `dctl serve
+--env-file PATH` (one `KEY=VALUE` per line) — this is how `dctl service` keeps
+secrets out of the unit file. A real environment variable always wins over the
+file.
 
 Bot permissions (minimal): **View Channels + Send Messages + Read Message
 History** (`68608`). Reading message *content* also needs the **Message Content
-Intent** enabled in the Developer Portal.
+Intent** enabled in the Developer Portal. The `serve` daemon also needs **Manage
+Channels** (`68624`) and the `applications.commands` scope for slash commands.
 
 ## CLI
 
@@ -74,6 +92,39 @@ Run it permanently two ways:
 - **systemd (survives reboot/logout):** see [`contrib/dctl-bridge.service`](contrib/dctl-bridge.service).
 - **background (quick test):** `nohup dctl bridge -v &`
 
+## Daemon: always-on bot + slash commands
+
+`dctl bridge` is poll-based and one channel at a time. `dctl serve` is the
+upgrade: a long-running daemon that holds a **Gateway (websocket)** connection,
+so the bot shows as **online 24/7** and exposes native **slash commands**. It
+supervises one bridged Claude process per "session" (context stays hot, startup
+cost paid once) and persists its state across restarts.
+
+```sh
+DCTL_OWNER_ID=<your_user_id> dctl serve [--health-addr :8787] [--status-channel <id>]
+```
+
+| Slash command | Effect |
+|---|---|
+| `/set home <channel>` | Set the category or forum that holds sessions (type auto-detected). |
+| `/session create <name> [cmd] [shared]` | Create a channel/forum post and start a bridge on it. Runs in its **own git worktree** by default; `shared:true` uses the main checkout. |
+| `/session close <name> [force]` | Stop the bridge, remove the worktree (refuses if dirty unless `force:true`; branch `session/<name>` is kept), archive the channel. |
+| `/session list` | List active sessions. |
+| `/allow add\|remove\|list [user]` | Manage the slash-command allowlist (seed it with `DCTL_OWNER_ID`). |
+
+- **State** lives in `$DCTL_STATE_DIR/state.json` (default `~/.config/dctl`):
+  home, allowlist, sessions, repo. Sessions are respawned on restart.
+- **Worktree isolation** — each session gets `<repo>/.dctl-sessions/<name>` on
+  branch `session/<name>` (git-ignored); falls back to the shared checkout when
+  the repo isn't a git tree.
+- **Liveness** (independent of any Claude session — it tracks only the bot):
+  - `--health-addr :8787` → `GET /health` returns `200`+JSON when the gateway is
+    up, `503` when it's down (point UptimeKuma/curl at it).
+  - `--status-channel <id>` → a self-updating embed:
+    `🟢 dctl online · uptime … · ping …ms · N sessions`.
+
+Run it permanently with [`dctl service`](#run-the-daemon-at-boot-cross-os).
+
 ## Run the daemon at boot (cross-OS)
 
 `dctl service install` registers the `dctl serve` daemon as a native,
@@ -87,11 +138,15 @@ dctl service status    # report whether the service is running
 dctl service uninstall # stop and remove it
 ```
 
-Secrets never go into the generated unit: it sources an env file
-(`~/.config/dctl/dctl.env`, mode `0600`) that `install` creates as an empty
-template **only if it doesn't already exist** — it never overwrites your token.
-Fill it in (`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`) and
-restart the service. Install from an installed binary (`go install …`), not
+Secrets never go into the generated unit: the daemon loads an env file
+(`~/.config/dctl/dctl.env`, mode `0600`) itself via `serve --env-file` — no
+shell sourcing on any platform — and `install` creates that file as an empty
+template **only if it doesn't already exist**, so it never overwrites your token.
+On a first install (no token yet) the service is **enabled at boot but not
+started**, so it can't crash-loop against an empty template; fill in
+`DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`, then start it with
+the command `install` prints. When the token is already present, `install`
+starts it immediately. Install from an installed binary (`go install …`), not
 `go run`, whose executable path is a temporary file.
 
 ## Sessions (Discord slash commands)

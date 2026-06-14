@@ -43,6 +43,8 @@ type Options struct {
 	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
 	Session      string // session name, used with AllowState to resolve the per-session allowlist
 	Verbose      bool
+	Progress     string // "off" | "actions" | "full" (default "full")
+	ProgressKeep bool   // keep the full running list instead of collapsing to a summary
 }
 
 // Run links the channel to the command until ctx is cancelled.
@@ -53,6 +55,15 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 	if !c.Enabled() {
 		return dctl.ErrDisabled
+	}
+
+	switch o.Progress {
+	case "", "off", "actions", "full":
+	default:
+		return fmt.Errorf("invalid --progress %q (want off|actions|full)", o.Progress)
+	}
+	if o.Progress == "" {
+		o.Progress = "full"
 	}
 
 	// No channel configured anywhere → create (or reuse) a default one so the
@@ -123,17 +134,31 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 			// up while the (slow) command runs. Best-effort: ignore if the bot
 			// lacks Add Reactions.
 			_ = c.React(ctx, ch, m.ID, ackEmoji)
+
+			var pv *progressView
+			var onEvent func(session.Event)
+			if o.Progress != "off" {
+				post := func(id, content string) (string, error) {
+					return c.UpsertStatusMessage(ctx, ch, id, content)
+				}
+				pv = newProgressView(post, o.Progress, o.ProgressKeep, time.Now())
+				onEvent = pv.add
+			}
+
 			out, err := resp.Respond(ctx, session.DctlMessage{
 				Content:   m.Content,
 				Author:    m.Author.Username,
 				MessageID: m.ID,
 				ChannelID: m.ChannelID,
-			})
+			}, onEvent)
 			if err != nil && out == "" {
 				out = "⚠️ " + err.Error()
 			}
 			out = strings.TrimSpace(out)
 			if out == "" {
+				if pv != nil {
+					pv.finish(true)
+				}
 				_ = c.Unreact(ctx, ch, m.ID, ackEmoji)
 				_ = c.React(ctx, ch, m.ID, failEmoji)
 				continue
@@ -142,6 +167,9 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 				if _, err := c.Reply(ctx, ch, m.ID, chunk); err != nil {
 					logf(true, "reply error: %v", err)
 				}
+			}
+			if pv != nil {
+				pv.finish(err != nil)
 			}
 			// Swap the "seen" mark for a "done" mark once the answer is posted.
 			_ = c.Unreact(ctx, ch, m.ID, ackEmoji)

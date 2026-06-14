@@ -32,6 +32,8 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	allowSession := fs.String("allow-session", "", "session name used with --allow-state to resolve the per-session allowlist")
 	after := fs.String("after", "", "seed start id for the first run (state file wins once it exists)")
 	verbose := fs.Bool("v", false, "log activity to stderr")
+	progress := fs.String("progress", "full", "live activity feedback level: off | actions | full")
+	progressKeep := fs.Bool("progress-keep", false, "keep the full progress list instead of collapsing to a one-line summary")
 	fs.Parse(args)
 
 	return bridge.Run(ctx, c, bridge.Options{
@@ -47,6 +49,8 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		Session:      *allowSession,
 		After:        *after,
 		Verbose:      *verbose,
+		Progress:     *progress,
+		ProgressKeep: *progressKeep,
 	})
 }
 
