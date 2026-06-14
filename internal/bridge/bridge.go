@@ -45,6 +45,7 @@ type Options struct {
 	Verbose      bool
 	Progress     string // "off" | "actions" | "full" (default "full")
 	ProgressKeep bool   // keep the full running list instead of collapsing to a summary
+	Backend      string // "stream" | "oneshot" | "tmux" (empty → derived from Stream)
 }
 
 // Run links the channel to the command until ctx is cancelled.
@@ -98,10 +99,18 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 	logf(o.Verbose, "bridge up: cmd=%q stream=%v model=%q interval=%ds last=%s", o.Cmd, o.Stream, o.Model, o.Interval, last)
 
+	backend := o.Backend
+	if backend == "" {
+		if o.Stream {
+			backend = "stream"
+		} else {
+			backend = "oneshot"
+		}
+	}
 	oneShot := func(ctx context.Context, mm session.DctlMessage) (string, error) {
 		return runCmd(ctx, o.Cmd, mm)
 	}
-	resp := session.NewResponder(ctx, o.Stream, o.Cmd, o.Model, oneShot)
+	resp := session.NewResponder(ctx, backend, o.Cmd, o.Model, "", ch, oneShot)
 	defer resp.Close()
 
 	auth := &authorizer{o: o}
