@@ -45,14 +45,16 @@ func testConfig(goos string) Config {
 }
 
 func TestServeArgs(t *testing.T) {
-	got := serveArgs(Config{HealthAddr: "127.0.0.1:8787", ExtraArgs: []string{"--status-channel", "42"}})
-	want := "serve --health-addr 127.0.0.1:8787 --status-channel 42"
+	got := serveArgs(Config{EnvFile: "/e", ExtraArgs: []string{"--status-channel", "42"}})
+	want := "serve --env-file /e --status-channel 42"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("serveArgs = %q, want %q", strings.Join(got, " "), want)
 	}
-	// No health addr → flag omitted.
-	if strings.Join(serveArgs(Config{}), " ") != "serve" {
-		t.Fatalf("bare serveArgs should be just 'serve', got %v", serveArgs(Config{}))
+	// Tunable knobs (health-addr) are NOT baked into the unit — they live in
+	// config.json so editing them doesn't require reinstalling. Baking them would
+	// shadow config.json.
+	if strings.Join(serveArgs(Config{HealthAddr: "127.0.0.1:8787"}), " ") != "serve" {
+		t.Fatalf("health-addr must not be baked into serveArgs, got %v", serveArgs(Config{HealthAddr: "127.0.0.1:8787"}))
 	}
 }
 
@@ -70,7 +72,7 @@ func TestLinuxPlan(t *testing.T) {
 	}
 	for _, want := range []string{
 		// The daemon loads the env file itself; the unit just passes --env-file.
-		"ExecStart=/home/me/.local/bin/dctl serve --env-file /home/me/.config/dctl/dctl.env --health-addr 127.0.0.1:8787",
+		"ExecStart=/home/me/.local/bin/dctl serve --env-file /home/me/.config/dctl/dctl.env",
 		"Restart=always",
 		"StartLimitBurst=5", // cap restarts so a bad token can't spin forever
 		"WantedBy=default.target",
@@ -233,6 +235,55 @@ func TestDefaultCmdBakedIntoUnit(t *testing.T) {
 		// run means it was NOT quoted into one arg.
 		if strings.Contains(content, "--cmd "+cmd) {
 			t.Errorf("%s: default cmd not quoted as a single token:\n%s", goos, content)
+		}
+	}
+}
+
+// The install plan scaffolds a config.json template (never the unit's [0] slot,
+// which stays the launcher) carrying the pre-filled cmd and no secrets.
+func TestConfigScaffoldInPlan(t *testing.T) {
+	const cmd = "claude --model claude-opus-4-8 --effort low"
+	for _, goos := range []string{"linux", "darwin", "windows"} {
+		c := testConfig(goos)
+		c.ConfigPath = "/home/me/.config/dctl/config.json"
+		c.DefaultCmd = cmd
+		p, err := BuildPlan(c)
+		if err != nil {
+			t.Fatalf("plan %s: %v", goos, err)
+		}
+		var cfg *FileWrite
+		for i := range p.Files {
+			if p.Files[i].Path == c.ConfigPath {
+				cfg = &p.Files[i]
+			}
+		}
+		if cfg == nil {
+			t.Fatalf("%s: no config.json in plan", goos)
+		}
+		if !cfg.Template {
+			t.Errorf("%s: config.json must be Template (never clobber edits)", goos)
+		}
+		if !strings.Contains(cfg.Content, cmd) {
+			t.Errorf("%s: config.json missing pre-filled cmd:\n%s", goos, cfg.Content)
+		}
+		// The comment may *name* the secrets (explaining they live elsewhere),
+		// but the file must never carry an actual secret assignment.
+		if strings.Contains(cfg.Content, "DISCORD_BOT_TOKEN=") {
+			t.Errorf("%s: config.json must not assign secrets", goos)
+		}
+	}
+}
+
+// Without a ConfigPath (e.g. older callers) the plan omits the scaffold and the
+// launcher stays the first file, as the InstalledBinPath parse assumes.
+func TestNoConfigScaffoldWhenUnset(t *testing.T) {
+	p, err := BuildPlan(testConfig("linux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range p.Files {
+		if strings.HasSuffix(f.Path, "config.json") {
+			t.Fatalf("unexpected config.json scaffold: %s", f.Path)
 		}
 	}
 }

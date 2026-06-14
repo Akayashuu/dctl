@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/vskstudio/dctl/internal/config"
 )
 
 // label / on-disk names shared by the planner and the docs.
@@ -40,6 +42,9 @@ type Config struct {
 	HealthAddr string   // --health-addr value; "" omits the flag
 	ExtraArgs  []string // extra args appended to `dctl serve`
 	SkipStart  bool     // configure boot-start but don't start now (e.g. token not set yet)
+
+	ConfigPath string // path to the declarative config.json scaffold (template)
+	DefaultCmd string // pre-fills the scaffold's "cmd" (from install --cmd)
 }
 
 // FileWrite is one file the plan writes. Template files are written only when
@@ -74,14 +79,14 @@ func goos(c Config) string {
 
 // serveArgs builds the `serve …` argv the service runs. The daemon loads its
 // own secrets via --env-file (no shell sourcing), so the env file is passed as
-// a plain argument on every platform.
+// a plain argument on every platform. Tunable knobs (health-addr, cmd, …) are
+// NOT baked here: they live in config.json so a user can edit them without
+// reinstalling. Baking them as explicit flags would shadow config.json (an
+// explicit flag outranks it), silently overriding the user's edits.
 func serveArgs(c Config) []string {
 	args := []string{"serve"}
 	if c.EnvFile != "" {
 		args = append(args, "--env-file", c.EnvFile)
-	}
-	if c.HealthAddr != "" {
-		args = append(args, "--health-addr", c.HealthAddr)
 	}
 	return append(args, c.ExtraArgs...)
 }
@@ -99,18 +104,31 @@ func envFileWrite(c Config) FileWrite {
 	return FileWrite{Path: c.EnvFile, Content: envTemplate, Mode: 0o600, Template: true}
 }
 
-// BuildPlan returns the install plan for c's target OS.
+// BuildPlan returns the install plan for c's target OS. Every platform also
+// scaffolds the declarative config.json (template, never clobbered).
 func BuildPlan(c Config) (Plan, error) {
+	var p Plan
 	switch goos(c) {
 	case "linux":
-		return linuxPlan(c), nil
+		p = linuxPlan(c)
 	case "darwin":
-		return macPlan(c), nil
+		p = macPlan(c)
 	case "windows":
-		return windowsPlan(c), nil
+		p = windowsPlan(c)
 	default:
 		return Plan{}, fmt.Errorf("unsupported OS %q", goos(c))
 	}
+	if c.ConfigPath != "" {
+		p.Files = append(p.Files, configFileWrite(c))
+	}
+	return p, nil
+}
+
+// configFileWrite is the declarative config.json scaffold: a commented template
+// written only when missing, so reinstalling never clobbers an edited file. It
+// holds no secrets (those stay in the env file).
+func configFileWrite(c Config) FileWrite {
+	return FileWrite{Path: c.ConfigPath, Content: config.Template(c.DefaultCmd, c.HealthAddr), Mode: 0o644, Template: true}
 }
 
 // BuildUninstall returns the uninstall plan for c's target OS.
@@ -537,6 +555,7 @@ func DefaultConfig() (Config, error) {
 		Home:       home,
 		User:       uname,
 		EnvFile:    filepath.Join(home, ".config", "dctl", "dctl.env"),
+		ConfigPath: filepath.Join(home, ".config", "dctl", "config.json"),
 		HealthAddr: "127.0.0.1:8787",
 	}, nil
 }

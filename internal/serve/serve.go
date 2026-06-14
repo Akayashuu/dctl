@@ -71,6 +71,15 @@ type Options struct {
 	// Token is the bot token used for the gateway IDENTIFY (same value the
 	// client was built with). Sourced from the caller, not read off the client.
 	Token string
+
+	// Declarative config.json defaults. Owner seeds the allowlist on first run
+	// (env DCTL_OWNER_ID takes precedence, resolved by the caller). Home,
+	// Workspace and Source seed state in-memory only if unset, so a live /set
+	// always wins (see state.ApplyDefaults).
+	Owner     string
+	Home      *state.HomeRef
+	Workspace string
+	Source    string
 }
 
 // DefaultStatePath returns the default path to the daemon state file.
@@ -145,10 +154,14 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	if err != nil {
 		return fmt.Errorf("load state: %w", err)
 	}
-	// Seed the allowlist with the owner on first run.
-	if owner := os.Getenv("DCTL_OWNER_ID"); owner != "" {
-		_ = st.AddAllow(owner)
+	// Seed the allowlist with the owner on first run (env > config, resolved by
+	// the caller into o.Owner).
+	if o.Owner != "" {
+		_ = st.AddAllow(o.Owner)
 	}
+	// Seed declarative defaults from config.json in-memory only; a live /set
+	// (persisted to state.json) keeps precedence.
+	st.ApplyDefaults(o.Home, o.Workspace, o.Source)
 
 	self, _ := os.Executable()
 	partDir := filepath.Dir(o.StatePath) // participants/<name>.log lives beside state.json
@@ -161,7 +174,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	}
 	h.SetSessions(len(st.SnapshotSessions()))
 
-	instID, err := resolveInstanceID(st, o.InstanceID, os.Getenv("DCTL_OWNER_ID"))
+	instID, err := resolveInstanceID(st, o.InstanceID, o.Owner)
 	if err != nil {
 		return fmt.Errorf("resolve instance id: %w", err)
 	}

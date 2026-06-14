@@ -46,11 +46,12 @@ func runService(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("service", flag.ContinueOnError)
 	healthAddr := fs.String("health-addr", cfg.HealthAddr, "value for serve --health-addr (empty disables the health endpoint)")
 	envFile := fs.String("env-file", cfg.EnvFile, "path to the 0600 secrets file the service sources")
-	// --cmd bakes a default bridged command into the unit's ExecStart (serve
-	// --cmd). It sets the model/effort/etc. for every new session, e.g.
-	// 'claude --model claude-opus-4-8 --effort low'. A per-session cmd: still
-	// overrides it (see handler.sessionCreate).
-	defaultCmd := fs.String("cmd", "", "default bridged command baked into the unit (e.g. 'claude --model claude-opus-4-8 --effort low')")
+	// --cmd pre-fills the scaffolded config.json's "cmd" (the canonical home for
+	// the default bridged command — model/effort/etc., e.g.
+	// 'claude --model claude-opus-4-8 --effort low'). A per-session cmd: still
+	// overrides it (see handler.sessionCreate). Ignored if config.json already
+	// exists (the template is never clobbered — edit the file directly).
+	defaultCmd := fs.String("cmd", "", "default bridged command pre-filled into config.json (e.g. 'claude --model claude-opus-4-8 --effort low')")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -62,12 +63,9 @@ func runService(ctx context.Context, args []string) error {
 
 	switch sub {
 	case "install":
-		if *defaultCmd != "" {
-			// One ExtraArg pair: serve parses "--cmd" then the whole quoted string
-			// as a single value (serveArgs appends ExtraArgs verbatim; the unit
-			// builder quotes the space-bearing value so it stays one argv token).
-			cfg.ExtraArgs = append(cfg.ExtraArgs, "--cmd", *defaultCmd)
-		}
+		// The default bridged command lives in config.json now (not baked into
+		// the unit's ExecStart), so the user can edit it without reinstalling.
+		cfg.DefaultCmd = *defaultCmd
 		// Install prints a Note describing the exact state (started, or enabled
 		// at boot but awaiting a token), so don't assert "started" here.
 		return service.Install(ctx, cfg)

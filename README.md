@@ -133,15 +133,43 @@ boot-started service and starts it — on **Linux** a systemd *user* unit
 a launchd LaunchAgent, on **Windows** a Task Scheduler onlogon task.
 
 ```sh
-dctl service install   [--health-addr 127.0.0.1:8787] [--env-file PATH]
+dctl service install   [--health-addr 127.0.0.1:8787] [--cmd 'claude …'] [--env-file PATH]
 dctl service status    # report whether the service is running
 dctl service uninstall # stop and remove it
 ```
 
-Secrets never go into the generated unit: the daemon loads an env file
-(`~/.config/dctl/dctl.env`, mode `0600`) itself via `serve --env-file` — no
-shell sourcing on any platform — and `install` creates that file as an empty
-template **only if it doesn't already exist**, so it never overwrites your token.
+### Declarative config (`config.json`)
+
+Every non-secret daemon setting lives in `~/.config/dctl/config.json`, a
+commented file the daemon **reads but never rewrites** (unlike `state.json`), so
+it's safe to hand-edit:
+
+```jsonc
+{
+  // Base bridged command for new sessions (model/effort/etc.).
+  "cmd": "claude --model claude-opus-4-8 --effort low",
+  "healthAddr": "127.0.0.1:8787",   // "" disables the endpoint
+  "statusChannel": "",
+  "instance": "",
+  "owner": "",                       // Discord id seeded into the allowlist
+  "workspace": "",                   // /set workspace overrides this live
+  "source": ""                       // /set source overrides this live
+}
+```
+
+`install` scaffolds this file (pre-filling `cmd`/`healthAddr` from the matching
+flags) **only if it doesn't already exist** — it never clobbers your edits. The
+generated unit carries no tunable flags (only `--env-file`), so editing
+`config.json` and restarting is enough; no reinstall needed. Precedence:
+explicit CLI flag > env var > `config.json` > built-in default. The live
+allowlist and sessions stay in `state.json` (mutated via Discord), and a live
+`/set` always wins over `config.json` for `workspace`/`source`/home.
+
+Secrets never go into the generated unit **or `config.json`**: the daemon loads
+an env file (`~/.config/dctl/dctl.env`, mode `0600`) itself via `serve
+--env-file` — no shell sourcing on any platform — and `install` creates that
+file as an empty template **only if it doesn't already exist**, so it never
+overwrites your token.
 On a first install (no token yet) the service is **enabled at boot but not
 started**, so it can't crash-loop against an empty template; fill in
 `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, `DCTL_OWNER_ID`, then start it with

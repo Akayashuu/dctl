@@ -131,6 +131,25 @@ type State struct {
 // NewState returns an empty state bound to path (not yet written).
 func NewState(path string) *State { return &State{path: path} }
 
+// ApplyDefaults seeds declarative config.json values into the in-memory state
+// for any field not already set, WITHOUT persisting. This keeps config.json the
+// source of truth for unset fields while a live /set (which persists to
+// state.json) always wins: persisted state > config > empty. Because it never
+// writes, removing a value from config.json takes effect on the next restart.
+func (s *State) ApplyDefaults(home *HomeRef, workspace, source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Home.ID == "" && home != nil && home.ID != "" {
+		s.Home = *home
+	}
+	if s.Workspace == "" {
+		s.Workspace = workspace
+	}
+	if s.Source == "" {
+		s.Source = source
+	}
+}
+
 // LoadState reads state from path; a missing file yields an empty state.
 func LoadState(path string) (*State, error) {
 	s := NewState(path)
