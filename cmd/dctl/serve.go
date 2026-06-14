@@ -63,6 +63,7 @@ func runServe(ctx context.Context, c *dctl.Client, token string, args []string) 
 	return serve.Run(ctx, c, serve.Options{
 		StatePath:     *statePath,
 		DefaultCmd:    *defaultCmd,
+		DefaultInit:   cfg.InitPrompts,
 		HealthAddr:    *healthAddr,
 		StatusChannel: *statusChannel,
 		InstanceID:    *instanceID,

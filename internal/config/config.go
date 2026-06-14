@@ -30,11 +30,12 @@ type HomeRef struct {
 // default for knobs, live state.json for the declarative runtime fields).
 type Config struct {
 	// Daemon knobs (precedence: explicit flag > env > this > built-in default).
-	Cmd           string `json:"cmd"`           // base bridged command for new sessions
-	HealthAddr    string `json:"healthAddr"`    // serve --health-addr ("" disables)
-	StatusChannel string `json:"statusChannel"` // self-updating status embed channel
-	Instance      string `json:"instance"`      // per-daemon instance slug
-	Owner         string `json:"owner"`         // Discord user id seeded into the allowlist
+	Cmd           string   `json:"cmd"`                   // base bridged command for new sessions
+	InitPrompts   []string `json:"initPrompts,omitempty"` // tmux backend: priming messages for new sessions
+	HealthAddr    string   `json:"healthAddr"`            // serve --health-addr ("" disables)
+	StatusChannel string   `json:"statusChannel"`         // self-updating status embed channel
+	Instance      string   `json:"instance"`              // per-daemon instance slug
+	Owner         string   `json:"owner"`                 // Discord user id seeded into the allowlist
 
 	// Declarative runtime defaults (precedence: live state.json > this > empty).
 	Home      *HomeRef `json:"home"`      // session home category/forum
@@ -105,6 +106,10 @@ func Template(cmd, healthAddr string) string {
   // A per-session "cmd:" option still overrides this. Example:
   //   "claude --model claude-opus-4-8 --effort low"   (Opus 4.8, low, 200k ctx)
   "cmd": ` + string(cmdJSON) + `,
+
+  // tmux backend priming: messages typed once after the pane settles, before
+  // any human turn (best-effort). A per-session "init:" option overrides this.
+  // "initPrompts": ["read CLAUDE.md and wait for instructions"],
 
   // Health endpoint address; "" disables it.
   "healthAddr": ` + string(healthJSON) + `,

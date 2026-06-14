@@ -43,15 +43,51 @@ type Options struct {
 	AllowState   string // daemon state.json read per-message to enforce the allowlist (empty = no enforcement)
 	Session      string // session name, used with AllowState to resolve the per-session allowlist
 	Verbose      bool
-	Progress     string // "off" | "actions" | "full" (default "full")
-	ProgressKeep bool   // keep the full running list instead of collapsing to a summary
+	Progress     string        // "off" | "actions" | "full" (default "full")
+	ProgressKeep bool          // keep the full running list instead of collapsing to a summary
+	Backend      string        // "stream" | "oneshot" | "tmux" (empty → derived from Stream)
+	TmuxTimeout  time.Duration // tmux backend: max wait for a turn to settle (0 = default)
+	InitPrompts  []string      // tmux backend: priming messages typed once after the pane settles
+}
+
+// resolveBackend picks the responder backend. An explicit backend always wins.
+// When unset, the default is tmux (interactive claude TUI); --stream is legacy
+// and only consulted here, where --stream=false selects the one-shot backend.
+func resolveBackend(backend string, stream bool) string {
+	if backend != "" {
+		return backend
+	}
+	if stream {
+		return "tmux"
+	}
+	return "oneshot"
+}
+
+// availableBackend downgrades the tmux backend to stream when the tmux binary is
+// missing, so the default works on hosts without tmux instead of erroring at the
+// first message. look is exec.LookPath (injected for testing). The bool reports
+// whether a downgrade happened, so the caller can log it.
+func availableBackend(backend string, look func(string) (string, error)) (string, bool) {
+	if backend == "tmux" {
+		if _, err := look("tmux"); err != nil {
+			return "stream", true
+		}
+	}
+	return backend, false
 }
 
 // Run links the channel to the command until ctx is cancelled.
 // Body lifted verbatim from the old runBridge minus flag parsing.
 func Run(ctx context.Context, c *dctl.Client, o Options) error {
-	if !o.Stream && strings.TrimSpace(o.Cmd) == "" {
-		return fmt.Errorf("usage: dctl bridge --cmd '<command>' --stream=false [-c CHANNEL] [-i 5] [--state FILE]")
+	backend := resolveBackend(o.Backend, o.Stream)
+	if downgraded, fell := availableBackend(backend, exec.LookPath); fell {
+		logf(true, "tmux not found on PATH — falling back to the %s backend", downgraded)
+		backend = downgraded
+	}
+	// Only the one-shot backend needs an explicit --cmd (it has no built-in
+	// program). stream/tmux default to launching claude, so they run cmd-less.
+	if backend == "oneshot" && strings.TrimSpace(o.Cmd) == "" {
+		return fmt.Errorf("usage: dctl bridge --backend oneshot --cmd '<command>' [-c CHANNEL] [-i 5] [--state FILE]")
 	}
 	if !c.Enabled() {
 		return dctl.ErrDisabled
@@ -101,7 +137,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	oneShot := func(ctx context.Context, mm session.DctlMessage) (string, error) {
 		return runCmd(ctx, o.Cmd, mm)
 	}
-	resp := session.NewResponder(ctx, o.Stream, o.Cmd, o.Model, oneShot)
+	resp := session.NewResponder(ctx, backend, o.Cmd, o.Model, "", ch, o.TmuxTimeout, o.InitPrompts, oneShot)
 	defer resp.Close()
 
 	auth := &authorizer{o: o}

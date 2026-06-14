@@ -9,15 +9,30 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
-// NewResponder selects the response strategy. stream=true (default) keeps a
-// persistent claude stream-json process; stream=false runs oneShot per message.
-func NewResponder(ctx context.Context, stream bool, cmdStr, model string, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
-	if !stream {
+// NewResponder selects the response strategy by backend:
+//
+//	"stream"  — one persistent claude stream-json process (default)
+//	"oneshot" — run cmd fresh per message
+//	"tmux"    — interactive claude TUI inside a tmux session, text relayed
+//
+// dir is the working directory (tmux/stream); channel seeds the tmux session name.
+// tmuxTimeout caps how long the tmux backend waits for a turn to settle (0 =
+// default); it is ignored by the other backends. initPrompts are priming
+// messages the tmux backend types once after the pane settles (also tmux-only).
+func NewResponder(ctx context.Context, backend, cmdStr, model, dir, channel string, tmuxTimeout time.Duration, initPrompts []string, oneShot func(context.Context, DctlMessage) (string, error)) Responder {
+	switch backend {
+	case "oneshot":
 		return &oneShotResponder{run: oneShot}
+	case "tmux":
+		return newTmuxResponder(tmuxSessionName(channel), dir, strings.Fields(cmdStr), model, tmuxTimeout, initPrompts)
+	default: // "stream"
+		r := &streamResponder{ctx: ctx, base: streamBase(strings.Fields(cmdStr)), model: model}
+		r.dir = dir
+		return r
 	}
-	return &streamResponder{ctx: ctx, base: streamBase(strings.Fields(cmdStr)), model: model}
 }
 
 // streamBase normalizes a base command for persistent stream-json mode by

@@ -20,8 +20,11 @@ type Session struct {
 	ChannelID string `json:"channelID"`
 	Type      string `json:"type"` // "text" | "forum"
 	Cmd       string `json:"cmd"`
+	Backend   string `json:"backend,omitempty"`  // bridge backend ("" or "tmux" = TUI default; "stream" = stream-json; "oneshot" = per-message cmd)
 	Worktree  string `json:"worktree,omitempty"` // abs path; empty for a shared session
 	Project   string `json:"project,omitempty"`  // workspace sub-dir the session started from
+
+	InitPrompts []string `json:"initPrompts,omitempty"` // tmux backend: priming messages typed once after the pane settles
 
 	Allow        []string `json:"allow,omitempty"`        // curated per-session allowlist
 	Participants []string `json:"participants,omitempty"` // observed authors (cache; journal is source of truth)

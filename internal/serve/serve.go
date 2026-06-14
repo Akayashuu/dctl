@@ -63,6 +63,7 @@ func (u serviceUpdater) Restart(ctx context.Context) error {
 type Options struct {
 	StatePath     string
 	DefaultCmd    string
+	DefaultInit   []string
 	HealthAddr    string
 	StatusChannel string
 	// InstanceID is the explicit per-daemon namespace (-instance flag /
@@ -189,7 +190,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	// then reports cleanly rather than blocking daemon startup.
 	upCfg, _ := service.DefaultConfig()
 	up := serviceUpdater{cfg: upCfg, st: st}
-	hdl := handler.NewHandler(c, sup, wt, fg, up, st, o.DefaultCmd, partDir)
+	hdl := handler.NewHandler(c, sup, wt, fg, up, st, o.DefaultCmd, o.DefaultInit, partDir)
 
 	if err := c.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("register commands: %w", err)

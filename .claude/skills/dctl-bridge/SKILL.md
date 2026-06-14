@@ -38,9 +38,61 @@ session per message.
 | `--state FILE` | — | Persist last-seen id. **Authoritative**: a restart resumes exactly here and never replays handled messages. Always pass it. |
 | `--after ID` | — | Seeds the start id for the **first run only** (ignored once `--state` exists). |
 | `-v` | off | Log activity to stderr. |
+| `--backend tmux\|stream\|oneshot` | `tmux` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
+| `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
+| `--tmux-init MSG` | — | tmux backend: priming message typed once after the pane settles, before any human turn. **Repeatable** (order preserved). |
 
 Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 `DCTL_MESSAGE_ID`, `DCTL_CHANNEL`.
+
+## Backends
+
+The bridge can talk to Claude three ways:
+
+- **`stream`** — one persistent `claude -p` **stream-json** process.
+  Structured, token-frugal, context stays hot. Permission prompts are not
+  interactive (Claude runs pre-approved). Select with `--backend stream`.
+- **`oneshot`** — runs `--cmd` fresh per message (arbitrary non-Claude commands).
+- **`tmux`** (**default**) — drives the **interactive `claude` TUI** inside a tmux session and
+  relays its **text** back (no screenshots/ANSI). One persistent `claude` per
+  channel (`tmux send-keys` in, `capture-pane` out, diffed and chrome-stripped).
+  Launched with `--dangerously-skip-permissions`, so there are no permission
+  prompts to answer yet (rendering prompts as Discord buttons is a future
+  phase). Needs the `tmux` binary on PATH — if it's missing the bridge logs a
+  warning and **falls back to the `stream` backend** automatically (so the
+  default still works); `dctl service install` also flags a missing tmux. You can `tmux attach -t
+  dctl-<channel>` (or `dctl-<DCTL_INSTANCE_ID>-<channel>` when that env var is
+  set) to land in the same live session the bridge is driving. **Known limit:**
+  multi-line messages are flattened to one line before sending (a literal
+  newline would submit early); send separate messages for separate turns.
+
+From the daemon: `/session create name:foo backend:tmux` creates a tmux-backed
+session; the backend is persisted, so a daemon restart respawns it the same way.
+
+**Priming (init prompts).** The tmux backend can type N messages into the pane
+once it settles, *before* the first human turn — e.g. "read CLAUDE.md and wait".
+Three ways, same effect (all persisted into the session so a restart replays
+them): `--tmux-init MSG` (repeatable) on `dctl bridge`; `"initPrompts": [...]` in
+`config.json` (daemon default for every new session); and `/session create
+init:"first || second"` (`||` separates prompts, overrides the config default).
+Priming is **best-effort**: a prompt that errors or times out is logged and the
+rest — plus the first human message — still go through. Each priming turn
+advances the baseline, so the human's first reply never echoes the priming
+output back.
+
+### Security (read before exposing tmux)
+
+- **The allowlist is the only gate.** With `--dangerously-skip-permissions`, every
+  message from an *allowed* author becomes a command Claude runs unprompted. Always
+  deploy the tmux backend with `--allow-state` on a **dedicated control channel** —
+  never an open channel.
+- **The tmux backend runs `--cmd` through a shell.** `tmux new-session` execs the
+  command string via `/bin/sh -c`, so shell metacharacters in `--cmd` are
+  interpreted (the `stream`/`oneshot` backends exec an explicit argv with no shell).
+  Treat `--cmd` as trusted operator input and don't build it from untrusted text.
+- The pane working directory is pinned explicitly (the tmux *server* is a daemon
+  whose cwd may differ from the bridge's); a stale namesake session is killed before
+  a fresh one starts.
 
 ## Feedback while it works
 

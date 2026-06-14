@@ -24,6 +24,12 @@ type Supervisor struct {
 // bridgeArgs builds the child `dctl bridge` argv for sess.
 func (s *Supervisor) bridgeArgs(sess state.Session) []string {
 	args := []string{"bridge", "-c", sess.ChannelID, "--cmd", sess.Cmd}
+	if sess.Backend != "" && sess.Backend != "stream" {
+		args = append(args, "--backend", sess.Backend)
+	}
+	for _, p := range sess.InitPrompts {
+		args = append(args, "--tmux-init", p)
+	}
 	if s.PartDir != "" {
 		args = append(args, "--participants", state.ParticipantsPath(s.PartDir, sess.Name))
 	}

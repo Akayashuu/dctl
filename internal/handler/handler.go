@@ -109,22 +109,37 @@ type updater interface {
 
 // Handler routes slash-command interactions to actions.
 type Handler struct {
-	d          discord
-	sup        supervisor
-	wt         worktrees
-	fg         forges
-	up         updater
-	st         *state.State
-	defaultCmd string
-	partDir    string // dir holding participants/<name>.log journals
+	d           discord
+	sup         supervisor
+	wt          worktrees
+	fg          forges
+	up          updater
+	st          *state.State
+	defaultCmd  string
+	defaultInit []string // config.json initPrompts: tmux priming for new sessions
+	partDir     string   // dir holding participants/<name>.log journals
 }
 
 // NewHandler builds a Handler. defaultCmd is the bridge command used when a
 // session is created without an explicit cmd (e.g. "claude -p --continue").
-// partDir is the directory under which per-session participant journals live
-// (participants/<name>.log).
-func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, up updater, st *state.State, defaultCmd, partDir string) *Handler {
-	return &Handler{d: d, sup: sup, wt: wt, fg: fg, up: up, st: st, defaultCmd: defaultCmd, partDir: partDir}
+// defaultInit is the config.json priming applied to new tmux sessions when the
+// create command gives no init: of its own. partDir is the directory under which
+// per-session participant journals live (participants/<name>.log).
+func NewHandler(d discord, sup supervisor, wt worktrees, fg forges, up updater, st *state.State, defaultCmd string, defaultInit []string, partDir string) *Handler {
+	return &Handler{d: d, sup: sup, wt: wt, fg: fg, up: up, st: st, defaultCmd: defaultCmd, defaultInit: defaultInit, partDir: partDir}
+}
+
+// splitInit parses the /session create init: option into ordered priming
+// messages. A single Discord option can't carry an array, so "||" separates
+// prompts; blank segments are dropped so a trailing separator is harmless.
+func splitInit(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, "||") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // PartDir returns the participants journal directory (used by tests/wiring).
@@ -354,6 +369,15 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	if c, ok := in.Data.Opt("cmd"); ok && c != "" {
 		cmd = c
 	}
+	backend, _ := in.Data.Opt("backend")
+	if backend == "" {
+		backend = "tmux" // default backend: interactive claude TUI
+	}
+	// Priming: an explicit init: (split on "||") overrides the config default.
+	initPrompts := h.defaultInit
+	if v, ok := in.Data.Opt("init"); ok && v != "" {
+		initPrompts = splitInit(v)
+	}
 	ws := h.st.WorkspaceRoot()
 	project := ""
 	if ws != "" {
@@ -399,7 +423,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			}
 			return errf("create channel: %v", err)
 		}
-		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Worktree: worktree, Project: project}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "text", Cmd: cmd, Backend: backend, Worktree: worktree, Project: project, InitPrompts: initPrompts}
 	case "forum":
 		ch, err := h.d.ForumPost(ctx, home.ID, title, "Session **"+title+"** started.")
 		if err != nil {
@@ -408,7 +432,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 			}
 			return errf("create forum post: %v", err)
 		}
-		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Worktree: worktree, Project: project}
+		sess = state.Session{Name: name, ChannelID: ch.ID, Type: "forum", Cmd: cmd, Backend: backend, Worktree: worktree, Project: project, InitPrompts: initPrompts}
 	default:
 		return errf("home type %q unsupported", home.Type)
 	}

@@ -32,6 +32,45 @@ func TestBridgeArgsIncludeAllowlist(t *testing.T) {
 	}
 }
 
+func TestBridgeArgsIncludeBackend(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: "tmux"})
+	if !strings.Contains(strings.Join(args, " "), "--backend tmux") {
+		t.Fatalf("expected --backend tmux in args: %v", args)
+	}
+}
+
+func TestBridgeArgsIncludeInitPrompts(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: "tmux", InitPrompts: []string{"read CLAUDE.md", "wait"}})
+	joined := strings.Join(args, " ")
+	// One --tmux-init per prompt, in order, so a respawn replays the same priming.
+	if strings.Count(joined, "--tmux-init") != 2 {
+		t.Fatalf("expected two --tmux-init flags: %v", args)
+	}
+	if !strings.Contains(joined, "--tmux-init read CLAUDE.md") || !strings.Contains(joined, "--tmux-init wait") {
+		t.Fatalf("expected each prompt passed through: %v", args)
+	}
+}
+
+func TestBridgeArgsNoInitPromptsWhenEmpty(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1"})
+	if strings.Contains(strings.Join(args, " "), "--tmux-init") {
+		t.Fatalf("no --tmux-init expected without prompts: %v", args)
+	}
+}
+
+func TestBridgeArgsNoBackendWhenStream(t *testing.T) {
+	s := NewSupervisor(context.Background(), "/bin/dctl")
+	for _, b := range []string{"", "stream"} {
+		args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: b})
+		if strings.Contains(strings.Join(args, " "), "--backend") {
+			t.Fatalf("no --backend expected for backend %q: %v", b, args)
+		}
+	}
+}
+
 func TestBridgeArgsNoAllowlistWhenStatePathEmpty(t *testing.T) {
 	s := NewSupervisor(context.Background(), "/bin/dctl")
 	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1"})

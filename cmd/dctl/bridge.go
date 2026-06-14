@@ -3,10 +3,22 @@ package main
 import (
 	"context"
 	"flag"
+	"strings"
+	"time"
 
 	"github.com/vskstudio/dctl"
 	"github.com/vskstudio/dctl/internal/bridge"
 )
+
+// stringList is a repeatable string flag: each occurrence appends one value, so
+// `--tmux-init a --tmux-init b` yields ["a","b"] in order.
+type stringList []string
+
+func (s *stringList) String() string { return strings.Join(*s, ", ") }
+func (s *stringList) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
 
 // runBridge links a channel to an external command: it watches for new human
 // messages and, for each, runs `--cmd` with the message text, then posts the
@@ -22,7 +34,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	fs := flag.NewFlagSet("bridge", flag.ExitOnError)
 	ch := channelFlag(fs)
 	cmdStr := fs.String("cmd", "", "base command (default 'claude' in stream mode; the per-message program in one-shot mode)")
-	stream := fs.Bool("stream", true, "keep one persistent claude stream-json process per session (false = one-shot per message)")
+	stream := fs.Bool("stream", true, "legacy: only consulted when --backend is unset; --stream=false selects the one-shot backend")
 	model := fs.String("model", "", "model for the persistent claude session (e.g. claude-haiku-4-5-20251001)")
 	ensure := fs.String("ensure", "prospector", "if no channel is set, create/reuse a channel with this name")
 	interval := fs.Int("i", 5, "poll interval in seconds")
@@ -34,6 +46,10 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	progress := fs.String("progress", "full", "live activity feedback level: off | actions | full")
 	progressKeep := fs.Bool("progress-keep", false, "keep the full progress list instead of collapsing to a one-line summary")
+	backend := fs.String("backend", "", "responder backend: tmux (default) | stream | oneshot")
+	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
+	var initPrompts stringList
+	fs.Var(&initPrompts, "tmux-init", "tmux backend: priming message typed once after the pane settles (repeatable)")
 	fs.Parse(args)
 
 	return bridge.Run(ctx, c, bridge.Options{
@@ -51,9 +67,16 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 		Verbose:      *verbose,
 		Progress:     *progress,
 		ProgressKeep: *progressKeep,
+		Backend:      *backend,
+		TmuxTimeout:  *tmuxTimeout,
+		InitPrompts:  initPrompts,
 	})
 }
 
 // bridgeOptionsHasParticipants exists so a compile-time test can assert the
 // --participants journal is wired into bridge.Options.
 var bridgeOptionsHasParticipants = bridge.Options{}.Participants
+
+var bridgeOptionsHasBackend = bridge.Options{}.Backend
+
+var bridgeOptionsHasInitPrompts = bridge.Options{}.InitPrompts

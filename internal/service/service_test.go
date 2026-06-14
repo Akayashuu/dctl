@@ -2,12 +2,26 @@ package service
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestTmuxPreflightNote(t *testing.T) {
+	missing := func(string) (string, error) { return "", errors.New("not found") }
+	present := func(string) (string, error) { return "/usr/bin/tmux", nil }
+
+	if note := tmuxPreflightNote(present); note != "" {
+		t.Errorf("tmux present: expected no note, got %q", note)
+	}
+	note := tmuxPreflightNote(missing)
+	if note == "" || !strings.Contains(note, "tmux not found") {
+		t.Errorf("tmux missing: expected a tmux-not-found note, got %q", note)
+	}
+}
 
 func TestWriteFileNeverOverwritesTemplate(t *testing.T) {
 	dir := t.TempDir()
