@@ -121,6 +121,13 @@ answer is posted (⚠️ on empty/error). The human sees the message was registe
 without waiting. Reactions need the bot's **Add Reactions** permission; if missing
 they're skipped silently (the reply still posts).
 
+Beyond the reaction, the bridge posts a single **live progress message** per
+question (created on the first tool call, edited in place) that shows each tool the
+session runs, then collapses to a one-line summary. `--progress` tunes it: `full`
+(default) adds reasoning text, `actions` shows tools only, `off` disables it. On the
+**tmux backend** (the default) only tool actions are available — the TUI has no
+structured reasoning feed — so `--progress full` behaves like `actions` there.
+
 **State / no-replay:** the bridge marks a message handled (persists its id) *before*
 running the command. This guarantees a restart never replays — at the cost that a
 crash mid-command drops that one reply rather than re-answering it. Always run with
