@@ -325,6 +325,33 @@ func TestExtractTurnStripsToolBlocks(t *testing.T) {
 	}
 }
 
+func TestStripToolBlocksKeepsProseBullet(t *testing.T) {
+	// A prose line starting with a bullet glyph but not matching a tool call must
+	// survive — only real tool lines (and their ⎿ continuations) are dropped.
+	lines := []string{"● note: this is prose", "⏺ Bash(ls)", "  ⎿ a", "  ⎿ b", "Done."}
+	got := stripToolBlocks(lines)
+	want := []string{"● note: this is prose", "Done."}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d: got %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestStripToolBlocksBlankLineWithinBlock(t *testing.T) {
+	// A blank line between a tool bullet and its ⎿ results must not end the block
+	// and leak the results back into the reply.
+	lines := []string{"⏺ Bash(ls)", "", "  ⎿ result", "Prose after."}
+	got := stripToolBlocks(lines)
+	want := []string{"Prose after."}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
 var n int
 
 func changing() string { n++; return strings.Repeat("x", n) }

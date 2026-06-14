@@ -143,9 +143,19 @@ func (c *Client) Read(ctx context.Context, channelID string, limit int, after st
 	return msgs, nil
 }
 
+// noMentions disables Discord mention parsing for an outbound message body. Bot
+// replies echo Claude/tool output verbatim, so without this an "@everyone"/"@here"
+// or a "<@id>" appearing in that text (a filename, a quoted user message, anything
+// Claude prints) would ping real members. Attached to every content-bearing
+// payload the bot posts or edits.
+var noMentions = map[string]any{"parse": []string{}}
+
 func (c *Client) post(ctx context.Context, channelID string, body map[string]any) (*Message, error) {
 	if !c.Enabled() {
 		return nil, ErrDisabled
+	}
+	if _, ok := body["allowed_mentions"]; !ok {
+		body["allowed_mentions"] = noMentions
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/channels/"+channelID+"/messages", body)
 	if err != nil {

@@ -43,6 +43,16 @@ func TestParseToolEvents(t *testing.T) {
 			in:   "  ⏺ Bash(ls)",
 			want: []toolEvent{{Tool: "Bash", Detail: "ls"}},
 		},
+		{
+			name: "trailing timing suffix excluded from detail",
+			in:   "⏺ Bash(npm test) (2.3s)",
+			want: []toolEvent{{Tool: "Bash", Detail: "npm test"}},
+		},
+		{
+			name: "prose starting with bullet glyph is not a tool",
+			in:   "● note: this is just prose, not a tool call",
+			want: nil,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -64,34 +64,29 @@ func extractTurn(before, after string) string {
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-// stripToolBlocks drops tool-call bullet lines (⏺/●) and their ⎿ continuation
-// lines, leaving only Claude's prose — the tools are already shown in the live
-// progress message, so the final reply need not repeat them.
+// stripToolBlocks drops tool-call bullet lines and their ⎿ continuation lines,
+// leaving only Claude's prose — the tools are already shown in the live progress
+// message, so the final reply need not repeat them. A tool line is recognized by
+// isToolLine, the same predicate the live feed uses, so a prose line that merely
+// starts with a bullet glyph (e.g. "● note: …") is never mistaken for a tool and
+// dropped. Blank lines inside a tool block (between the bullet and its ⎿ results)
+// don't end the block, so a result is never leaked back into the reply.
 func stripToolBlocks(lines []string) []string {
 	var out []string
 	inTool := false
 	for _, l := range lines {
 		t := strings.TrimSpace(l)
-		if strings.ContainsAny(firstRune(t), toolBullets) {
+		if isToolLine(t) {
 			inTool = true
 			continue
 		}
-		if inTool && strings.HasPrefix(t, "⎿") {
-			continue // continuation/result of the tool above
+		if inTool && (t == "" || strings.HasPrefix(t, "⎿")) {
+			continue // blank or continuation/result line within the tool block
 		}
 		inTool = false
 		out = append(out, l)
 	}
 	return out
-}
-
-// firstRune returns the first rune of s as a string ("" if empty), so a multibyte
-// bullet glyph can be tested with ContainsAny without indexing bytes.
-func firstRune(s string) string {
-	for _, r := range s {
-		return string(r)
-	}
-	return ""
 }
 
 // stripChrome drops chrome lines and collapses runs of blank lines, returning
@@ -395,11 +390,22 @@ func (t *tmuxResponder) turn(ctx context.Context, text string, onEvent func(Even
 	if out, err := tmuxRunCtx(ctx, "send-keys", "-t", t.sessName, "Enter"); err != nil {
 		return "", fmt.Errorf("tmux send-keys Enter: %v: %s", err, out)
 	}
+	// emitted counts the tools already streamed this turn. Dedup is positional:
+	// the TUI scrollback is append-only above the input box, so a tool already
+	// seen keeps its index across repaints and is never emitted twice. lastLines
+	// skips the re-parse on spinner-only repaints (frame changed but no line was
+	// added), so a verbose turn stays roughly O(lines) instead of O(lines×frames).
 	emitted := 0
+	lastLines := -1
 	var onFrame func(string)
 	if onEvent != nil {
 		onFrame = func(frame string) {
-			tools := parseToolEvents(strings.Join(newLines(before, frame), "\n"))
+			nl := newLines(before, frame)
+			if len(nl) == lastLines {
+				return // no line added since the last parse → no new tool possible
+			}
+			lastLines = len(nl)
+			tools := parseToolEvents(strings.Join(nl, "\n"))
 			for ; emitted < len(tools); emitted++ {
 				onEvent(Event{Kind: "tool", Tool: tools[emitted].Tool, Detail: tools[emitted].Detail})
 			}
@@ -434,8 +440,11 @@ func (t *tmuxResponder) turn(ctx context.Context, text string, onEvent func(Even
 	}
 	reply := extractTurn(before, after)
 	if reply == "" {
-		// Never silently lose a turn: fall back to the raw diff.
-		reply = strings.TrimSpace(strings.Join(newLines(before, after), "\n"))
+		// A turn that was all tool calls and no prose strips to nothing. Never
+		// silently lose it, but don't dump raw ⏺/⎿ markup either — fall back to the
+		// chrome-stripped diff (tool blocks kept, TUI furniture removed) so the
+		// reply is at least readable when there's no prose to show.
+		reply = strings.TrimSpace(strings.Join(stripChrome(newLines(before, after)), "\n"))
 	}
 	return reply, nil
 }

@@ -55,7 +55,7 @@ func (c *Client) ForumPost(ctx context.Context, forumID, name, content string) (
 		return nil, ErrNoChannel
 	}
 	req, err := c.newRequest(ctx, http.MethodPost, "/channels/"+forumID+"/threads",
-		map[string]any{"name": name, "message": map[string]any{"content": content}})
+		map[string]any{"name": name, "message": map[string]any{"content": content, "allowed_mentions": noMentions}})
 	if err != nil {
 		return nil, err
 	}

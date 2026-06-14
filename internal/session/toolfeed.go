@@ -16,9 +16,20 @@ type toolEvent struct {
 const toolBullets = "⏺●"
 
 // toolLineRe matches a tool-call bullet line after leading whitespace: the bullet,
-// the tool name, and an optional "(args)" group. "⎿" continuation lines never
-// match (they carry no bullet).
-var toolLineRe = regexp.MustCompile(`^[` + toolBullets + `]\s+([A-Za-z][A-Za-z0-9_.-]*)\s*(?:\((.*)\))?\s*$`)
+// the tool name, an optional "(args)" group, and any number of trailing
+// parenthesized groups (the TUI appends a timing suffix like "(2.3s)"). Only the
+// first group is captured as the detail. The line must contain nothing else, so
+// prose that merely starts with a bullet glyph ("● note: …") does not match, and
+// "⎿" continuation lines never match (they carry no bullet).
+var toolLineRe = regexp.MustCompile(`^[` + toolBullets + `]\s+([A-Za-z][A-Za-z0-9_.-]*)(?:\s*\(([^)]*)\))?(?:\s*\([^)]*\))*\s*$`)
+
+// isToolLine reports whether a trimmed line is a tool-call bullet line. It is the
+// single source of truth shared by parseToolEvents (the live feed) and
+// stripToolBlocks (the final-reply cleaner), so the two never disagree on what
+// counts as a tool line.
+func isToolLine(trimmed string) bool {
+	return toolLineRe.MatchString(trimmed)
+}
 
 // parseToolEvents returns the tool invocations in text, in first-seen order.
 // Non-tool prose and ⎿ result lines are ignored.
