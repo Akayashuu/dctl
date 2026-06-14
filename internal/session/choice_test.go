@@ -92,6 +92,33 @@ func TestParseThenRenderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPendingChoiceSurfacesParsedPrompt(t *testing.T) {
+	r := &tmuxResponder{}
+	if _, ok := r.PendingChoice(); ok {
+		t.Fatal("a fresh responder has no pending choice")
+	}
+	r.pending = &choicePrompt{
+		Question: "Proceed?",
+		Options:  []choiceOption{{Key: "1", Label: "Yes"}, {Key: "2", Label: "No"}},
+	}
+	c, ok := r.PendingChoice()
+	if !ok {
+		t.Fatal("expected a pending choice")
+	}
+	if c.Question != "Proceed?" || len(c.Options) != 2 {
+		t.Fatalf("unexpected choice: %+v", c)
+	}
+	if c.Options[0] != (ChoiceItem{Value: "1", Label: "Yes"}) || c.Options[1].Value != "2" {
+		t.Fatalf("options not mapped (Key->Value): %+v", c.Options)
+	}
+}
+
+// The tmux responder satisfies the optional choice interfaces the bridge checks.
+func TestTmuxResponderImplementsChoiceInterfaces(t *testing.T) {
+	var _ ChoiceAware = (*tmuxResponder)(nil)
+	var _ ChoiceInjector = (*tmuxResponder)(nil)
+}
+
 func TestParseChoicePromptUnboxed(t *testing.T) {
 	// Same prompt without box chrome (some widths render unframed).
 	in := strings.Join([]string{

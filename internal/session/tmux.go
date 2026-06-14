@@ -159,7 +159,8 @@ type tmuxResponder struct {
 
 	mu       sync.Mutex
 	started  bool
-	baseline string // cleaned-up: full capture after the previous turn settled
+	baseline string        // cleaned-up: full capture after the previous turn settled
+	pending  *choicePrompt // set when the last turn ended on an interactive choice prompt
 }
 
 // newTmuxResponder builds a responder. base is the pane command (defaults to
@@ -275,6 +276,62 @@ func sendLiteralArgs(sess, text string) []string {
 	return []string{"send-keys", "-t", sess, "-l", "--", text}
 }
 
+// Choice is an interactive prompt the pane is waiting on, surfaced to the bridge
+// so it can render a native select menu. Each item's Value is the digit typed
+// into the pane to pick it; Label is the human text.
+type Choice struct {
+	Question string
+	Options  []ChoiceItem
+}
+
+// ChoiceItem is one selectable option: Value is the keystroke that picks it.
+type ChoiceItem struct {
+	Value string
+	Label string
+}
+
+// ChoiceAware is implemented by responders that can leave the pane waiting on an
+// interactive prompt. After Respond, the bridge asks PendingChoice to decide
+// whether to attach a select menu to its reply.
+type ChoiceAware interface {
+	PendingChoice() (Choice, bool)
+}
+
+// ChoiceInjector is implemented by responders that can answer a pending choice
+// out-of-band (a daemon-routed select-menu click) by typing the value into the
+// pane, serialized with normal turns.
+type ChoiceInjector interface {
+	InjectChoice(ctx context.Context, value string) (string, error)
+}
+
+// PendingChoice reports the choice the pane is waiting on after the last turn,
+// if any. Guarded by the same mutex as Respond, so it reflects a completed turn.
+func (t *tmuxResponder) PendingChoice() (Choice, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.pending == nil {
+		return Choice{}, false
+	}
+	c := Choice{Question: t.pending.Question}
+	for _, o := range t.pending.Options {
+		c.Options = append(c.Options, ChoiceItem{Value: o.Key, Label: o.Label})
+	}
+	return c, true
+}
+
+// InjectChoice types value into the pane as one turn, answering a pending choice
+// from a select-menu click. It takes the same lock as Respond, so an injected
+// pick can never interleave keystrokes with a concurrent human turn.
+func (t *tmuxResponder) InjectChoice(ctx context.Context, value string) (string, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.started {
+		// Nothing has been typed yet, so there is no prompt to answer.
+		return "", fmt.Errorf("tmux: no session to inject choice into")
+	}
+	return t.turn(ctx, normalizeNewlines(value))
+}
+
 func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event)) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -294,6 +351,7 @@ func (t *tmuxResponder) Respond(ctx context.Context, m DctlMessage, _ func(Event
 // loop in start().
 func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	before := t.baseline
+	t.pending = nil // cleared up front; a new choice prompt re-sets it below
 	if err := t.typeText(ctx, text); err != nil {
 		return "", err
 	}
@@ -312,6 +370,8 @@ func (t *tmuxResponder) turn(ctx context.Context, text string) (string, error) {
 	// empty or garbled reply. The human picks by replying with a number (typed into
 	// the pane next turn) or, in daemon mode, via a native select menu.
 	if cp, ok := parseChoicePrompt(after); ok {
+		cp := cp
+		t.pending = &cp // surfaced to the bridge (PendingChoice) for the select menu
 		return renderChoice(cp), nil
 	}
 	if err != nil {
