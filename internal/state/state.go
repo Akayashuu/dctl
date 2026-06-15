@@ -16,6 +16,7 @@ type HomeRef struct {
 
 // Session is one bridged channel/post supervised by the daemon.
 type Session struct {
+	ID        string `json:"id,omitempty"` // stable logical id, decoupled from Name and ChannelID
 	Name      string `json:"name"`
 	ChannelID string `json:"channelID"`
 	Type      string `json:"type"` // "text" | "forum"
@@ -166,7 +167,31 @@ func LoadState(path string) (*State, error) {
 	if err := json.Unmarshal(buf, s); err != nil {
 		return nil, err
 	}
+	seen := map[string]bool{}
+	for i := range s.Sessions {
+		if s.Sessions[i].ID != "" {
+			seen[s.Sessions[i].ID] = true
+		}
+	}
+	for i := range s.Sessions {
+		if s.Sessions[i].ID == "" {
+			s.Sessions[i].ID = newSessionID(s.Sessions[i].Name, seen)
+			seen[s.Sessions[i].ID] = true
+		}
+	}
 	return s, nil
+}
+
+// newSessionID returns a stable id for a session. Name is already unique and
+// git-safe, so it seeds a readable id; a numeric disambiguator keeps ids stable
+// if a name is later reused.
+func newSessionID(name string, existing map[string]bool) string {
+	base := "s_" + name
+	id := base
+	for n := 1; existing[id]; n++ {
+		id = fmt.Sprintf("%s_%d", base, n)
+	}
+	return id
 }
 
 // Save atomically writes state to its path.
@@ -250,6 +275,13 @@ func (s *State) AddSession(sess Session) error {
 		if ss.Name == sess.Name {
 			return fmt.Errorf("session %q already exists", sess.Name)
 		}
+	}
+	if sess.ID == "" {
+		seen := map[string]bool{}
+		for _, e := range s.Sessions {
+			seen[e.ID] = true
+		}
+		sess.ID = newSessionID(sess.Name, seen)
 	}
 	s.Sessions = append(s.Sessions, sess)
 	return s.saveLocked()

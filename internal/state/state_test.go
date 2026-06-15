@@ -1,9 +1,30 @@
 package state
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestLoadStateBackfillsSessionID(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	legacy := `{"sessions":[{"name":"alpha","channelID":"123","type":"text","cmd":"claude"}]}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, err := LoadState(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, ok := st.FindSession("alpha")
+	if !ok {
+		t.Fatal("session alpha missing after load")
+	}
+	if s.ID == "" {
+		t.Fatalf("legacy session should get a generated ID")
+	}
+}
 
 func TestStateRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
