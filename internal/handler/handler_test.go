@@ -212,9 +212,9 @@ func TestSessionCreateText(t *testing.T) {
 	if !ok || sess.Worktree != "/wt/x" {
 		t.Fatalf("session not persisted with worktree: %+v", sess)
 	}
-	// No backend: option given → defaults to the interactive tmux TUI.
-	if sess.Backend != "tmux" {
-		t.Fatalf("expected default backend tmux, got %q", sess.Backend)
+	// No backend: option given → defaults to the persistent stream-json backend.
+	if sess.Backend != "stream" {
+		t.Fatalf("expected default backend stream, got %q", sess.Backend)
 	}
 }
 

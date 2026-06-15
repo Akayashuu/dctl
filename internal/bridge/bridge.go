@@ -53,14 +53,14 @@ type Options struct {
 }
 
 // resolveBackend picks the responder backend. An explicit backend always wins.
-// When unset, the default is tmux (interactive claude TUI); --stream is legacy
-// and only consulted here, where --stream=false selects the one-shot backend.
+// When unset, the default is stream (persistent claude stream-json); --stream is
+// legacy and only consulted here, where --stream=false selects the one-shot backend.
 func resolveBackend(backend string, stream bool) string {
 	if backend != "" {
 		return backend
 	}
 	if stream {
-		return "tmux"
+		return "stream"
 	}
 	return "oneshot"
 }

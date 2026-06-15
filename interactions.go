@@ -190,9 +190,9 @@ func dctlCommands() []map[string]any {
 				{"name": "name", "description": "Session name", "type": typeStr, "required": true},
 				{"name": "cmd", "description": "Override bridged command", "type": typeStr, "autocomplete": true},
 				{"name": "shared", "description": "Run in the main checkout (no worktree)", "type": typeBool},
-				{"name": "backend", "description": "Bridge backend (default tmux)", "type": typeStr, "choices": []map[string]any{
-					{"name": "tmux", "value": "tmux"},
+				{"name": "backend", "description": "Bridge backend (default stream)", "type": typeStr, "choices": []map[string]any{
 					{"name": "stream", "value": "stream"},
+					{"name": "tmux", "value": "tmux"},
 				}},
 				{"name": "project", "description": "Workspace project to start from (see /workspace list)", "type": typeStr, "autocomplete": true},
 				{"name": "clone", "description": "Remote repo to clone first (owner/name or URL)", "type": typeStr, "autocomplete": true},

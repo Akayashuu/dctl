@@ -40,7 +40,7 @@ session per message.
 | `--progress LEVEL` | `full` | Live activity feedback per message: `off`, `actions` (tools only), `full` (tools + reasoning). |
 | `--progress-keep` | off | Keep the full progress list instead of collapsing to a one-line summary. |
 | `-v` | off | Log activity to stderr. |
-| `--backend tmux\|stream\|oneshot` | `tmux` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
+| `--backend stream\|tmux\|oneshot` | `stream` | Responder strategy (see below). `--stream` is legacy, consulted only when this is unset. |
 | `--tmux-timeout DUR` | `5m` | tmux backend: max wait for a turn to settle. |
 | `--tmux-init MSG` | — | tmux backend: priming message typed once after the pane settles, before any human turn. **Repeatable** (order preserved). |
 | `--control-socket PATH` | — | tmux backend: unix socket the daemon forwards select-menu clicks to. Set automatically by the supervisor; unset standalone (numeric-reply fallback only). |
@@ -52,11 +52,11 @@ Per-message environment passed to the command: `DCTL_MSG`, `DCTL_AUTHOR`,
 
 The bridge can talk to Claude three ways:
 
-- **`stream`** — one persistent `claude -p` **stream-json** process.
+- **`stream`** (**default**) — one persistent `claude -p` **stream-json** process.
   Structured, token-frugal, context stays hot. Permission prompts are not
-  interactive (Claude runs pre-approved). Select with `--backend stream`.
+  interactive (Claude runs pre-approved).
 - **`oneshot`** — runs `--cmd` fresh per message (arbitrary non-Claude commands).
-- **`tmux`** (**default**) — drives the **interactive `claude` TUI** inside a tmux session and
+- **`tmux`** — drives the **interactive `claude` TUI** inside a tmux session and
   relays its **text** back (no screenshots/ANSI). One persistent `claude` per
   channel (`tmux send-keys` in, `capture-pane` out, diffed and chrome-stripped).
   Launched with `--dangerously-skip-permissions`, so tool-permission prompts
@@ -64,9 +64,9 @@ The bridge can talk to Claude three ways:
   you want to proceed") are detected and rendered as clean numbered options. You
   pick by **replying with a number** (typed into the pane next turn) and, under
   the daemon, via a native **select menu** (see *Interactive choices* below).
-  Needs the `tmux` binary on PATH — if it's missing the bridge logs a
-  warning and **falls back to the `stream` backend** automatically (so the
-  default still works); `dctl service install` also flags a missing tmux. You can `tmux attach -t
+  Select with `--backend tmux`. Needs the `tmux` binary on PATH — if it's
+  missing the bridge logs a warning and **falls back to the `stream` backend**
+  automatically; `dctl service install` also flags a missing tmux. You can `tmux attach -t
   dctl-<channel>` (or `dctl-<DCTL_INSTANCE_ID>-<channel>` when that env var is
   set) to land in the same live session the bridge is driving. Multi-line
   messages are sent as one unit via tmux **bracketed paste** (a buffer loaded

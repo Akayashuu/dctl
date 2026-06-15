@@ -20,7 +20,7 @@ type Session struct {
 	ChannelID string `json:"channelID"`
 	Type      string `json:"type"` // "text" | "forum"
 	Cmd       string `json:"cmd"`
-	Backend   string `json:"backend,omitempty"`  // bridge backend ("" or "tmux" = TUI default; "stream" = stream-json; "oneshot" = per-message cmd)
+	Backend   string `json:"backend,omitempty"`  // bridge backend ("" or "stream" = stream-json default; "tmux" = interactive TUI; "oneshot" = per-message cmd)
 	Worktree  string `json:"worktree,omitempty"` // abs path; empty for a shared session
 	Project   string `json:"project,omitempty"`  // workspace sub-dir the session started from
 

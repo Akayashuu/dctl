@@ -31,10 +31,10 @@ func (s *Supervisor) bridgeArgs(sess state.Session) []string {
 	for _, p := range sess.InitPrompts {
 		args = append(args, "--tmux-init", p)
 	}
-	// tmux-backed sessions (the default) get a control socket so the daemon can
-	// forward select-menu clicks to the bridge. The path is derived from the
-	// session name, so the daemon dials the same one without extra coordination.
-	if sess.Backend == "" || sess.Backend == "tmux" {
+	// tmux-backed sessions get a control socket so the daemon can forward
+	// select-menu clicks to the bridge. The path is derived from the session
+	// name, so the daemon dials the same one without extra coordination.
+	if sess.Backend == "tmux" {
 		args = append(args, "--control-socket", control.SocketPath(sess.Name))
 	}
 	if s.PartDir != "" {

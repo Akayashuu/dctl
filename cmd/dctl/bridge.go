@@ -46,7 +46,7 @@ func runBridge(ctx context.Context, c *dctl.Client, args []string) error {
 	verbose := fs.Bool("v", false, "log activity to stderr")
 	progress := fs.String("progress", "full", "live activity feedback level: off | actions | full")
 	progressKeep := fs.Bool("progress-keep", false, "keep the full progress list instead of collapsing to a one-line summary")
-	backend := fs.String("backend", "", "responder backend: tmux (default) | stream | oneshot")
+	backend := fs.String("backend", "", "responder backend: stream (default) | tmux | oneshot")
 	tmuxTimeout := fs.Duration("tmux-timeout", 5*time.Minute, "tmux backend: max wait for a turn to settle")
 	var initPrompts stringList
 	fs.Var(&initPrompts, "tmux-init", "tmux backend: priming message typed once after the pane settles (repeatable)")

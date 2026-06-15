@@ -12,18 +12,18 @@ import (
 func TestBridgeArgsIncludeControlSocketForTmux(t *testing.T) {
 	s := NewSupervisor(context.Background(), "/bin/dctl")
 	want := control.SocketPath("demo")
-	// Default backend (empty) is tmux → gets a control socket for choice routing.
-	for _, backend := range []string{"", "tmux"} {
-		args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: backend})
-		joined := strings.Join(args, " ")
-		if !strings.Contains(joined, "--control-socket "+want) {
-			t.Fatalf("backend %q: expected --control-socket %s in %v", backend, want, args)
-		}
+	// Only the explicit tmux backend gets a control socket for choice routing.
+	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: "tmux"})
+	if !strings.Contains(strings.Join(args, " "), "--control-socket "+want) {
+		t.Fatalf("tmux backend: expected --control-socket %s in %v", want, args)
 	}
-	// The stream backend has no pane to type into → no control socket.
-	args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: "stream"})
-	if strings.Contains(strings.Join(args, " "), "--control-socket") {
-		t.Fatalf("stream backend should not get a control socket: %v", args)
+	// The default (empty → stream) and explicit stream backends have no pane to
+	// type into → no control socket.
+	for _, backend := range []string{"", "stream"} {
+		args := s.bridgeArgs(state.Session{Name: "demo", ChannelID: "c1", Backend: backend})
+		if strings.Contains(strings.Join(args, " "), "--control-socket") {
+			t.Fatalf("backend %q should not get a control socket: %v", backend, args)
+		}
 	}
 }
 

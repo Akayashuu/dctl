@@ -5,13 +5,13 @@ import (
 	"testing"
 )
 
-func TestResolveBackendDefaultsToTmux(t *testing.T) {
+func TestResolveBackendDefaultsToStream(t *testing.T) {
 	cases := []struct {
 		backend string
 		stream  bool
 		want    string
 	}{
-		{"", true, "tmux"},           // default: nothing set → tmux
+		{"", true, "stream"},         // default: nothing set → stream
 		{"", false, "oneshot"},       // legacy --stream=false → oneshot
 		{"stream", true, "stream"},   // explicit wins over the default
 		{"stream", false, "stream"},  // explicit wins over --stream

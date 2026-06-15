@@ -372,7 +372,7 @@ func (h *Handler) sessionCreate(ctx context.Context, in dctl.Interaction) dctl.R
 	}
 	backend, _ := in.Data.Opt("backend")
 	if backend == "" {
-		backend = "tmux" // default backend: interactive claude TUI
+		backend = "stream" // default backend: persistent claude stream-json
 	}
 	// Priming: an explicit init: (split on "||") overrides the config default.
 	initPrompts := h.defaultInit
