@@ -1,4 +1,4 @@
-package dctl
+package discord
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 )
 
 func TestDctlCommandsHasWorkspaceAndOptions(t *testing.T) {
-	cmds := dctlCommands()
+	cmds := Commands()
 	var names []string
 	for _, c := range cmds {
 		names = append(names, c["name"].(string))

@@ -1,10 +1,10 @@
-package dctl
+package discord
 
 import "testing"
 
 // hasSessionSub walks the declarative command set for a (top, name) pair.
 func hasSessionSub(top, name string) bool {
-	for _, c := range dctlCommands() {
+	for _, c := range Commands() {
 		if c["name"] != top {
 			continue
 		}

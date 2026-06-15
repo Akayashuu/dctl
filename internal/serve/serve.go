@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/vskstudio/dctl"
+	"github.com/vskstudio/dctl/discord"
 	"github.com/vskstudio/dctl/internal/control"
 	"github.com/vskstudio/dctl/internal/forge"
 	"github.com/vskstudio/dctl/internal/gateway"
@@ -216,7 +217,7 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	up := serviceUpdater{cfg: upCfg, st: st}
 	hdl := handler.NewHandler(c, sup, wt, fg, up, st, o.DefaultCmd, o.DefaultInit, partDir)
 
-	if err := c.RegisterCommands(ctx); err != nil {
+	if err := discord.RegisterCommands(ctx, c); err != nil {
 		return fmt.Errorf("register commands: %w", err)
 	}
 	// Needed to edit deferred interaction replies (webhook @original).
