@@ -1,5 +1,3 @@
-module github.com/vskstudio/dctl
+module github.com/Akayashuu/dctl
 
 go 1.23
-
-require github.com/coder/websocket v1.8.14

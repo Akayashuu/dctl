@@ -223,7 +223,7 @@ func (c *Client) newRequest(ctx context.Context, method, path string, body any) 
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bot "+c.token)
-	req.Header.Set("User-Agent", "dctl (https://github.com/vskstudio/dctl, 1.0)")
+	req.Header.Set("User-Agent", "dctl (https://github.com/Akayashuu/dctl, 1.0)")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

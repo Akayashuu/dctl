@@ -27,7 +27,7 @@ func TestRootImportsNoDomain(t *testing.T) {
 		}
 		for _, imp := range f.Imports {
 			p := strings.Trim(imp.Path.Value, `"`)
-			if strings.HasPrefix(p, "github.com/vskstudio/dctl/") {
+			if strings.HasPrefix(p, "github.com/Akayashuu/dctl/") {
 				t.Errorf("%s imports domain package %q — root must stay a pure client", e.Name(), p)
 			}
 		}
