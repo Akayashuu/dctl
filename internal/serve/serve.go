@@ -16,10 +16,10 @@ import (
 	"github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/instanceid"
 	"github.com/vskstudio/dctl/internal/service"
-	"github.com/vskstudio/dctl/kernel"
 	"github.com/vskstudio/dctl/internal/state"
 	"github.com/vskstudio/dctl/internal/supervisor"
 	"github.com/vskstudio/dctl/internal/worktree"
+	"github.com/vskstudio/dctl/kernel"
 )
 
 // serviceUpdater backs /service update|restart from inside the daemon. It binds
