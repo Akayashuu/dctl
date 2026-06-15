@@ -6,20 +6,6 @@ import (
 	"testing"
 )
 
-func TestChoiceCustomIDRoundTrip(t *testing.T) {
-	id := ChoiceCustomID("my-session")
-	if !strings.HasPrefix(id, "dctlchoice:") {
-		t.Fatalf("custom id %q missing prefix", id)
-	}
-	got, ok := ParseChoiceCustomID(id)
-	if !ok || got != "my-session" {
-		t.Fatalf("ParseChoiceCustomID(%q) = %q,%v; want my-session,true", id, got, ok)
-	}
-	if _, ok := ParseChoiceCustomID("other:thing"); ok {
-		t.Fatal("a non-choice custom id must not parse as a choice menu")
-	}
-}
-
 func TestChoiceMenuComponentsShape(t *testing.T) {
 	comps := choiceMenuComponents("dctlchoice:s", []SelectOption{
 		{Label: "Yes", Value: "1"},
@@ -70,9 +56,8 @@ func TestComponentInteractionUnmarshal(t *testing.T) {
 	if in.ChannelID != "999" {
 		t.Fatalf("channel_id = %q, want 999", in.ChannelID)
 	}
-	sess, ok := ParseChoiceCustomID(in.Data.CustomID)
-	if !ok || sess != "s" {
-		t.Fatalf("custom id routing failed: %q,%v", sess, ok)
+	if in.Data.CustomID != "dctlchoice:s" {
+		t.Fatalf("custom_id = %q, want dctlchoice:s", in.Data.CustomID)
 	}
 	if len(in.Data.Values) != 1 || in.Data.Values[0] != "2" {
 		t.Fatalf("values = %v, want [2]", in.Data.Values)

@@ -137,7 +137,7 @@ func resolveInstanceID(st *state.State, optID, ownerID string) (string, error) {
 // bridge over its control socket (the bridge types it into the pane), then the
 // click is acknowledged by collapsing the menu so it can't be used twice.
 func handleComponent(ctx context.Context, c *dctl.Client, in dctl.Interaction) {
-	sess, ok := dctl.ParseChoiceCustomID(in.Data.CustomID)
+	sess, ok := discord.ParseChoiceCustomID(in.Data.CustomID)
 	if !ok {
 		return // not a dctl choice menu — ignore
 	}

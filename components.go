@@ -3,23 +3,7 @@ package dctl
 import (
 	"context"
 	"net/http"
-	"strings"
 )
-
-// choiceCustomIDPrefix tags a select-menu interaction as a dctl choice prompt so
-// the daemon can recognize the click and route it to the owning session's bridge
-// instead of treating it as a slash command.
-const choiceCustomIDPrefix = "dctlchoice:"
-
-// ChoiceCustomID builds the custom_id carried by a session's choice select menu.
-// The session name lets the daemon find the bridge to forward the pick to.
-func ChoiceCustomID(session string) string { return choiceCustomIDPrefix + session }
-
-// ParseChoiceCustomID extracts the session name from a choice-menu custom_id and
-// reports whether the id is a dctl choice menu at all (vs. some other component).
-func ParseChoiceCustomID(id string) (string, bool) {
-	return strings.CutPrefix(id, choiceCustomIDPrefix)
-}
 
 // SelectOption is one entry in a select menu: Label is shown in the dropdown,
 // Value is what the interaction submits when the entry is chosen.
