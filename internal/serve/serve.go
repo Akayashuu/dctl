@@ -16,6 +16,7 @@ import (
 	"github.com/vskstudio/dctl/internal/health"
 	"github.com/vskstudio/dctl/internal/instanceid"
 	"github.com/vskstudio/dctl/internal/service"
+	"github.com/vskstudio/dctl/kernel"
 	"github.com/vskstudio/dctl/internal/state"
 	"github.com/vskstudio/dctl/internal/supervisor"
 	"github.com/vskstudio/dctl/internal/worktree"
@@ -172,6 +173,12 @@ func handleDeferred(ctx context.Context, c *dctl.Client, hdl *handler.Handler, h
 	h.SetSessions(len(st.SnapshotSessions()))
 }
 
+// registerPlugins wires the in-process plugins into the registry. In Phase 1 this
+// is replaced by NATS self-registration with the same Manifest.
+func registerPlugins(r *kernel.Registry, c *dctl.Client) {
+	r.RegisterGateway(discord.NewGateway(c))
+}
+
 // Run is the always-on Gateway daemon (gateway + supervisor + liveness).
 func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	h := health.NewHealth(time.Now())
@@ -216,6 +223,12 @@ func Run(ctx context.Context, c *dctl.Client, o Options) error {
 	upCfg, _ := service.DefaultConfig()
 	up := serviceUpdater{cfg: upCfg, st: st}
 	hdl := handler.NewHandler(c, sup, wt, fg, up, st, o.DefaultCmd, o.DefaultInit, partDir)
+
+	// Plugin registry: Discord is registered as a gateway plugin rather than
+	// hard-wired. Phase 1 swaps registerPlugins for NATS self-registration.
+	var registry kernel.Registry
+	registerPlugins(&registry, c)
+	fmt.Fprintf(os.Stderr, "dctl serve: registered %d gateway plugin(s)\n", len(registry.Gateways()))
 
 	if err := discord.RegisterCommands(ctx, c); err != nil {
 		return fmt.Errorf("register commands: %w", err)
