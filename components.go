@@ -52,9 +52,9 @@ func choiceMenuComponents(customID string, options []SelectOption) []map[string]
 	}}
 }
 
-// SendChoiceMenu posts content with a single-select dropdown. When replyTo is set
+// SendSelectMenu posts content with a single-select dropdown. When replyTo is set
 // the message threads under it; customID routes the click back to a session.
-func (c *Client) SendChoiceMenu(ctx context.Context, channelID, replyTo, content, customID string, options []SelectOption) (*Message, error) {
+func (c *Client) SendSelectMenu(ctx context.Context, channelID, replyTo, content, customID string, options []SelectOption) (*Message, error) {
 	ch, err := c.resolveChannel(channelID)
 	if err != nil {
 		return nil, err

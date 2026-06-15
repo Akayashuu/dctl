@@ -266,7 +266,7 @@ func postResult(ctx context.Context, c *dctl.Client, ch, replyTo, out string, re
 				for _, it := range pc.Options {
 					opts = append(opts, dctl.SelectOption{Label: it.Label, Value: it.Value})
 				}
-				if _, err := c.SendChoiceMenu(ctx, ch, replyTo, out, dctl.ChoiceCustomID(o.Session), opts); err != nil {
+				if _, err := c.SendSelectMenu(ctx, ch, replyTo, out, dctl.ChoiceCustomID(o.Session), opts); err != nil {
 					logf(true, "choice menu post error: %v — falling back to text", err)
 				} else {
 					return
