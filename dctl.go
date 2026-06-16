@@ -169,6 +169,31 @@ func (c *Client) post(ctx context.Context, channelID string, body map[string]any
 	return &msg, nil
 }
 
+func (c *Client) resolveGuild(ctx context.Context, guildID string) (string, error) {
+	if !c.Enabled() {
+		return "", ErrDisabled
+	}
+	if guildID != "" {
+		return guildID, nil
+	}
+	req, err := c.newRequest(ctx, http.MethodGet, "/users/@me/guilds", nil)
+	if err != nil {
+		return "", err
+	}
+	var gs []Guild
+	if err := c.do(req, &gs); err != nil {
+		return "", err
+	}
+	switch len(gs) {
+	case 1:
+		return gs[0].ID, nil
+	case 0:
+		return "", fmt.Errorf("dctl: bot is in no server (invite it first)")
+	default:
+		return "", fmt.Errorf("dctl: bot is in %d servers; pass a guild id", len(gs))
+	}
+}
+
 func (c *Client) resolveChannel(channelID string) (string, error) {
 	if channelID != "" {
 		return channelID, nil

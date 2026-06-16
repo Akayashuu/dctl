@@ -2,93 +2,55 @@ package dctl
 
 import (
 	"context"
-	"net/http"
-	"strings"
 	"testing"
+
+	"github.com/Akayashuu/dctl/internal/transport"
 )
 
-func TestSoleGuild(t *testing.T) {
-	// Exactly one guild → returned.
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`[{"id":"g1","name":"vskstudio"}]`))
-	})
-	g, err := c.SoleGuild(context.Background())
-	if err != nil || g.ID != "g1" {
-		t.Fatalf("want g1, got %+v err=%v", g, err)
-	}
+func chans(s *transport.Stub) *Channels {
+	return &Channels{rt: s, def: &defaults{guilds: &Guilds{rt: s}}}
+}
 
-	// Zero guilds → error (don't silently target nothing).
-	c0 := newTestClient(t, func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`[]`)) })
-	if _, err := c0.SoleGuild(context.Background()); err == nil {
-		t.Fatal("want error for zero guilds")
+func TestChannelsCreate(t *testing.T) {
+	s := transport.NewStub().
+		Reply(`{"id":"c1","name":"logs","type":0}`)
+	ch, err := chans(s).Create(context.Background(), "g1", "logs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch.ID != "c1" {
+		t.Fatalf("channel = %+v", ch)
+	}
+	c := s.Last()
+	if c.Method != "POST" || c.Path != "/guilds/g1/channels" {
+		t.Errorf("call = %s %s", c.Method, c.Path)
+	}
+	if c.Body.(map[string]any)["name"] != "logs" {
+		t.Errorf("body = %v", c.Body)
 	}
 }
 
-func TestEnsureChannelReusesExisting(t *testing.T) {
-	created := false
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasSuffix(r.URL.Path, "/guilds/g1/channels") && r.Method == http.MethodGet:
-			w.Write([]byte(`[{"id":"c9","name":"Prospector","type":0}]`))
-		case strings.HasSuffix(r.URL.Path, "/guilds/g1/channels") && r.Method == http.MethodPost:
-			created = true
-			w.Write([]byte(`{"id":"cNEW","name":"prospector","type":0}`))
-		}
-	})
-	// Case-insensitive match on existing "Prospector" → no creation.
-	ch, err := c.EnsureChannel(context.Background(), "g1", "prospector")
-	if err != nil || ch.ID != "c9" {
-		t.Fatalf("want existing c9, got %+v err=%v", ch, err)
+func TestChannelsRename(t *testing.T) {
+	s := transport.NewStub().Reply(`{"id":"c1","name":"new"}`)
+	ch, err := chans(s).Rename(context.Background(), "c1", "new")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if created {
-		t.Fatal("should not have created a channel when one matches")
+	if ch.Name != "new" {
+		t.Fatalf("name = %q", ch.Name)
+	}
+	c := s.Last()
+	if c.Method != "PATCH" || c.Path != "/channels/c1" {
+		t.Errorf("call = %s %s", c.Method, c.Path)
 	}
 }
 
-func TestEnsureChannelCreatesWhenMissing(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			w.Write([]byte(`[{"id":"c1","name":"general","type":0}]`))
-		case http.MethodPost:
-			w.Write([]byte(`{"id":"cNEW","name":"prospector","type":0}`))
-		}
-	})
-	ch, err := c.EnsureChannel(context.Background(), "g1", "prospector")
-	if err != nil || ch.ID != "cNEW" {
-		t.Fatalf("want created cNEW, got %+v err=%v", ch, err)
+func TestChannelsDelete(t *testing.T) {
+	s := transport.NewStub()
+	if err := chans(s).Delete(context.Background(), "c1"); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestChannelTypeParsesType(t *testing.T) {
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"id":"x","type":4,"name":"cat"}`))
-	})
-	ct, err := c.ChannelType(context.Background(), "x")
-	if err != nil || ct != 4 {
-		t.Fatalf("got %d,%v", ct, err)
-	}
-}
-
-func TestCreateChannelUnderSendsParent(t *testing.T) {
-	var gotParent string
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/guilds/g1/channels") && r.Method == http.MethodPost {
-			b := make([]byte, r.ContentLength)
-			r.Body.Read(b)
-			if strings.Contains(string(b), `"parent_id":"cat1"`) {
-				gotParent = "cat1"
-			}
-			w.Write([]byte(`{"id":"new","name":"demo","type":0}`))
-			return
-		}
-		w.Write([]byte(`[{"id":"g1","name":"vsk"}]`)) // SoleGuild
-	})
-	ch, err := c.CreateChannelUnder(context.Background(), "cat1", "demo")
-	if err != nil || ch.ID != "new" {
-		t.Fatalf("got %+v err=%v", ch, err)
-	}
-	if gotParent != "cat1" {
-		t.Fatal("expected parent_id forwarded")
+	if c := s.Last(); c.Method != "DELETE" || c.Path != "/channels/c1" {
+		t.Errorf("call = %s %s", c.Method, c.Path)
 	}
 }

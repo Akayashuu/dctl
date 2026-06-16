@@ -148,12 +148,12 @@ func (c *Client) RegisterCommands(ctx context.Context, commands []map[string]any
 	if err != nil {
 		return err
 	}
-	g, err := c.SoleGuild(ctx)
+	gid, err := c.resolveGuild(ctx, "")
 	if err != nil {
 		return err
 	}
 	req, err := c.newRequest(ctx, http.MethodPut,
-		"/applications/"+appID+"/guilds/"+g.ID+"/commands", commands)
+		"/applications/"+appID+"/guilds/"+gid+"/commands", commands)
 	if err != nil {
 		return err
 	}
