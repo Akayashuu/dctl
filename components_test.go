@@ -1,10 +1,52 @@
 package dctl
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
+
+func TestComponentsSendSelectMenu(t *testing.T) {
+	s := transport.NewStub().Reply(`{"id":"m1"}`)
+	c := &Components{rt: s, def: &defaults{channel: "def"}}
+	opts := []SelectOption{{Label: "A", Value: "a"}}
+	m, err := c.SendSelectMenu(context.Background(), "", "", "pick", "menu1", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.ID != "m1" {
+		t.Fatalf("msg = %+v", m)
+	}
+	if call := s.Last(); call.Path != "/channels/def/messages" {
+		t.Errorf("path = %s", call.Path)
+	}
+}
+
+func TestComponentsAck(t *testing.T) {
+	s := transport.NewStub()
+	c := &Components{rt: s, def: &defaults{}}
+	if err := c.Ack(context.Background(), "iid", "tok", "done"); err != nil {
+		t.Fatal(err)
+	}
+	call := s.Last()
+	if call.Method != "POST" || call.Path != "/interactions/iid/tok/callback" {
+		t.Errorf("call = %s %s", call.Method, call.Path)
+	}
+	body := call.Body.(map[string]any)
+	if body["type"] != 7 {
+		t.Errorf("type = %v, want 7", body["type"])
+	}
+	data := body["data"].(map[string]any)
+	if data["content"] != "done" {
+		t.Errorf("content = %v", data["content"])
+	}
+	if _, ok := data["allowed_mentions"]; ok {
+		t.Error("allowed_mentions must NOT be injected")
+	}
+}
 
 func TestChoiceMenuComponentsShape(t *testing.T) {
 	comps := choiceMenuComponents("dctlchoice:s", []SelectOption{
@@ -25,8 +67,7 @@ func TestChoiceMenuComponentsShape(t *testing.T) {
 }
 
 func TestClampRuneSafe(t *testing.T) {
-	// Clamping multibyte text must never yield invalid UTF-8.
-	in := strings.Repeat("é", 60) // 60 runes, 120 bytes
+	in := strings.Repeat("é", 60)
 	got := clamp(in, 100)
 	if r := []rune(got); len(r) != 60 {
 		t.Fatalf("clamp shortened a sub-limit string: %d runes", len(r))
@@ -38,8 +79,6 @@ func TestClampRuneSafe(t *testing.T) {
 	}
 }
 
-// A real MESSAGE_COMPONENT payload unmarshals into the same Interaction struct,
-// exposing the clicked custom_id and selected value.
 func TestComponentInteractionUnmarshal(t *testing.T) {
 	raw := `{
 		"id": "111", "type": 3, "token": "tok", "channel_id": "999",

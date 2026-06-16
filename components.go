@@ -3,6 +3,8 @@ package dctl
 import (
 	"context"
 	"net/http"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // SelectOption is one entry in a select menu: Label is shown in the dropdown,
@@ -13,10 +15,14 @@ type SelectOption struct {
 	Description string
 }
 
+// Components sends message components (select menus) and acks their interactions.
+type Components struct {
+	rt  transport.Doer
+	def *defaults
+}
+
 // choiceMenuComponents builds the Discord component tree for a single-select
-// dropdown: one ACTION_ROW (type 1) wrapping one STRING_SELECT (type 3). Label,
-// value, and description are clamped to Discord's 100-char ceiling (rune-safe so
-// a clamp never yields invalid UTF-8, which Discord rejects).
+// dropdown: one ACTION_ROW (type 1) wrapping one STRING_SELECT (type 3).
 func choiceMenuComponents(customID string, options []SelectOption) []map[string]any {
 	opts := make([]map[string]any, 0, len(options))
 	for _, o := range options {
@@ -27,19 +33,19 @@ func choiceMenuComponents(customID string, options []SelectOption) []map[string]
 		opts = append(opts, m)
 	}
 	return []map[string]any{{
-		"type": 1, // ACTION_ROW
+		"type": 1,
 		"components": []map[string]any{{
-			"type":      3, // STRING_SELECT
+			"type":      3,
 			"custom_id": customID,
 			"options":   opts,
 		}},
 	}}
 }
 
-// SendSelectMenu posts content with a single-select dropdown. When replyTo is set
-// the message threads under it; customID routes the click back to a session.
-func (c *Client) SendSelectMenu(ctx context.Context, channelID, replyTo, content, customID string, options []SelectOption) (*Message, error) {
-	ch, err := c.resolveChannel(channelID)
+// SendSelectMenu posts content with a single-select dropdown. When replyTo is
+// set the message threads under it; customID routes the click back to the caller.
+func (c *Components) SendSelectMenu(ctx context.Context, channelID, replyTo, content, customID string, options []SelectOption) (*Message, error) {
+	ch, err := c.def.resolveChannel(channelID)
 	if err != nil {
 		return nil, err
 	}
@@ -50,23 +56,22 @@ func (c *Client) SendSelectMenu(ctx context.Context, channelID, replyTo, content
 	if replyTo != "" {
 		body["message_reference"] = map[string]any{"message_id": replyTo, "fail_if_not_exists": false}
 	}
-	return c.post(ctx, ch, body)
+	var msg Message
+	if err := c.rt.Do(ctx, http.MethodPost, "/channels/"+seg(ch)+"/messages", body, &msg); err != nil {
+		return nil, err
+	}
+	return &msg, nil
 }
 
-// AckComponent acknowledges a component interaction with an UPDATE_MESSAGE
-// (type 7): it rewrites the message content and drops the menu, so the click is
-// confirmed and the dropdown can't be used twice. Must be sent within Discord's
-// 3s callback deadline.
-func (c *Client) AckComponent(ctx context.Context, id, token, content string) error {
+// Ack acknowledges a component interaction with an UPDATE_MESSAGE (type 7):
+// rewrites the message content and drops the menu so the click is confirmed
+// and the dropdown can't be used twice. Must be sent within Discord's 3s deadline.
+func (c *Components) Ack(ctx context.Context, id, token, content string) error {
 	body := map[string]any{
-		"type": 7, // UPDATE_MESSAGE
-		"data": map[string]any{"content": content, "components": []any{}, "allowed_mentions": noMentions},
+		"type": 7,
+		"data": map[string]any{"content": content, "components": []any{}},
 	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/interactions/"+id+"/"+token+"/callback", body)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
+	return c.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback", body, nil)
 }
 
 // clamp truncates s to at most max runes without splitting a multibyte rune.

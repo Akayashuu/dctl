@@ -1,3 +1,3 @@
-module github.com/Akayashuu/dctl
+module github.com/Herrscherd/dctl
 
 go 1.23

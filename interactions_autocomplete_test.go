@@ -2,10 +2,9 @@ package dctl
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
 	"testing"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestFocusedFindsNestedOption(t *testing.T) {
@@ -35,30 +34,36 @@ func TestFocusedNoneWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestRespondAutocompleteSendsType8(t *testing.T) {
-	var body map[string]any
-	c := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &body)
-		w.WriteHeader(http.StatusNoContent)
-	})
-	err := c.RespondAutocomplete(context.Background(), "id1", "tok1", []AutocompleteChoice{
-		{Name: "alpha", Value: "alpha"},
-		{Name: "beta", Value: "beta"},
-	})
+func TestInteractionsRespondNoAllowedMentions(t *testing.T) {
+	s := transport.NewStub()
+	in := &Interactions{rt: s, def: &defaults{guilds: &Guilds{rt: s}}}
+	err := in.Respond(context.Background(), "id", "tok", Response{Content: "hi"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := body["type"]; got != float64(8) {
-		t.Fatalf("response type = %v, want 8", got)
+	c := s.Last()
+	if c.Path != "/interactions/id/tok/callback" {
+		t.Errorf("path = %s", c.Path)
 	}
-	data, _ := body["data"].(map[string]any)
-	choices, _ := data["choices"].([]any)
-	if len(choices) != 2 {
-		t.Fatalf("choices = %v, want 2", choices)
+	data := c.Body.(map[string]any)["data"].(map[string]any)
+	if _, present := data["allowed_mentions"]; present {
+		t.Error("allowed_mentions must NOT be injected")
 	}
-	first, _ := choices[0].(map[string]any)
-	if first["name"] != "alpha" || first["value"] != "alpha" {
-		t.Fatalf("first choice = %v, want alpha/alpha", first)
+}
+
+func TestInteractionsAutocompleteTrimsTo25(t *testing.T) {
+	s := transport.NewStub()
+	in := &Interactions{rt: s}
+	choices := make([]AutocompleteChoice, 30)
+	for i := range choices {
+		choices[i] = AutocompleteChoice{Name: "n", Value: "v"}
+	}
+	if err := in.RespondAutocomplete(context.Background(), "id", "tok", choices); err != nil {
+		t.Fatal(err)
+	}
+	body := s.Last().Body.(map[string]any)
+	got := body["data"].(map[string]any)["choices"].([]map[string]any)
+	if len(got) != 25 {
+		t.Errorf("choices = %d, want 25", len(got))
 	}
 }

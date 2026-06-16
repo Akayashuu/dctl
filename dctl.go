@@ -1,247 +1,74 @@
-// Package dctl is a minimal, dependency-free client for the Discord bot REST
-// API (v10). It powers both the `dctl` CLI (token-frugal Discord access for an
-// AI agent) and the prospector backend's Discord bridge — one library, two
-// consumers. Mono-server by design: a single bot token plus a default channel.
-//
-// Auth is a bot token (DISCORD_BOT_TOKEN) sent as `Authorization: Bot <token>`.
-// No gateway/websocket — every call is on-demand HTTP, which suits agent-driven
-// usage (send/read/reply) and best-effort notification fan-out.
 package dctl
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"strings"
-	"time"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
-// APIBase is the Discord REST API root.
-const APIBase = "https://discord.com/api/v10"
-
-// ErrDisabled is returned by every method when no bot token is configured.
-var ErrDisabled = errors.New("dctl: no bot token (DISCORD_BOT_TOKEN)")
-
-// ErrNoChannel is returned when neither an explicit channel nor a default one is set.
-var ErrNoChannel = errors.New("dctl: no channel (DISCORD_CHANNEL_ID or --channel)")
-
-// Client talks to the Discord bot REST API. Build it with New; the zero value
-// is unusable. A client with an empty token returns ErrDisabled from every call
-// so consumers can stay oblivious to whether the feature is on.
+// Client is the dctl façade: it wires the HTTP transport into per-resource
+// sub-clients sharing one default channel/guild resolver. Build it with New.
 type Client struct {
-	token          string
-	defaultChannel string
-	http           *http.Client
+	rt     transport.Doer
+	def    *defaults
+	guilds *Guilds
 }
 
 // Option configures a Client.
-type Option func(*Client)
+type Option func(*clientConfig)
 
-// WithHTTPClient overrides the default 15s-timeout HTTP client.
-func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
-
-// New builds a Client. token is the bot token (kept in memory only, never
-// logged). defaultChannel is the channel that send/read/reply target when no
-// explicit channel id is passed.
-func New(token, defaultChannel string, opts ...Option) *Client {
-	c := &Client{
-		token:          token,
-		defaultChannel: defaultChannel,
-		http:           &http.Client{Timeout: 15 * time.Second},
-	}
-	for _, o := range opts {
-		o(c)
-	}
-	return c
+type clientConfig struct {
+	httpClient *http.Client
 }
 
-// Enabled reports whether a bot token is configured.
-func (c *Client) Enabled() bool { return c != nil && c.token != "" }
+// WithHTTPClient overrides the default 15s-timeout HTTP client.
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *clientConfig) { c.httpClient = h }
+}
 
-// DefaultChannel returns the configured fan-out / fallback channel id.
+// New builds a Client. token is the bot token (kept in memory only). defaultChannel
+// is the channel that message ops target when no explicit channel id is passed.
+func New(token, defaultChannel string, opts ...Option) *Client {
+	cfg := &clientConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	var topts []transport.Option
+	if cfg.httpClient != nil {
+		topts = append(topts, transport.WithHTTPClient(cfg.httpClient))
+	}
+	rt := transport.NewHTTP(token, topts...)
+	return newWith(rt, defaultChannel)
+}
+
+// newWith wires a Client around an arbitrary Doer (used by tests with a stub).
+func newWith(rt transport.Doer, defaultChannel string) *Client {
+	guilds := &Guilds{rt: rt}
+	def := &defaults{channel: defaultChannel, guilds: guilds}
+	return &Client{rt: rt, def: def, guilds: guilds}
+}
+
+// Enabled reports whether the underlying transport is configured.
+func (c *Client) Enabled() bool { return c != nil && c.rt.Enabled() }
+
+// DefaultChannel returns the configured default channel id.
 func (c *Client) DefaultChannel() string {
 	if c == nil {
 		return ""
 	}
-	return c.defaultChannel
+	return c.def.channel
 }
 
-// Message is the subset of a Discord message we surface.
-type Message struct {
-	ID          string       `json:"id"`
-	ChannelID   string       `json:"channel_id"`
-	Content     string       `json:"content"`
-	Author      Author       `json:"author"`
-	Timestamp   string       `json:"timestamp"`
-	Attachments []Attachment `json:"attachments"`
-}
-
-// Author identifies who wrote a message.
-type Author struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Bot      bool   `json:"bot"`
-}
-
-// Attachment is a file uploaded alongside a Discord message. URL points at the
-// Discord CDN and is fetched directly (not via the API base).
-type Attachment struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	URL         string `json:"url"`
-	ContentType string `json:"content_type"`
-	Size        int    `json:"size"`
-}
-
-// Send posts content to channelID (or the default channel when empty) and
-// returns the created message.
-func (c *Client) Send(ctx context.Context, channelID, content string) (*Message, error) {
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-	return c.post(ctx, ch, map[string]any{"content": content})
-}
-
-// Reply posts content as a threaded reply to messageID in channelID (or the
-// default channel).
-func (c *Client) Reply(ctx context.Context, channelID, messageID, content string) (*Message, error) {
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-	return c.post(ctx, ch, map[string]any{
-		"content":           content,
-		"message_reference": map[string]any{"message_id": messageID, "fail_if_not_exists": false},
-	})
-}
-
-// Read returns up to limit (1..100, default 50) recent messages from channelID
-// (or the default channel), oldest-first (chronological — natural to read).
-// When after is non-empty, only messages strictly newer than that id are
-// returned (for polling).
-func (c *Client) Read(ctx context.Context, channelID string, limit int, after string) ([]Message, error) {
-	if !c.Enabled() {
-		return nil, ErrDisabled
-	}
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	path := fmt.Sprintf("/channels/%s/messages?limit=%d", ch, limit)
-	if after != "" {
-		path += "&after=" + after
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var msgs []Message
-	if err := c.do(req, &msgs); err != nil {
-		return nil, err
-	}
-	// Discord returns newest-first; reverse to chronological order.
-	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
-		msgs[i], msgs[j] = msgs[j], msgs[i]
-	}
-	return msgs, nil
-}
-
-// LastMessageAt returns the timestamp of the channel's most recent message, or
-// the zero Time if the channel has no messages. It is the inactivity signal for
-// `session clean` (no persistent LastActive is stored on a session). A transport
-// or decode error is returned so callers can stay conservative and NOT treat the
-// session as stale on failure.
-func (c *Client) LastMessageAt(ctx context.Context, channelID string) (time.Time, error) {
-	msgs, err := c.Read(ctx, channelID, 1, "")
-	if err != nil {
-		return time.Time{}, err
-	}
-	if len(msgs) == 0 {
-		return time.Time{}, nil
-	}
-	ts, err := time.Parse(time.RFC3339, msgs[len(msgs)-1].Timestamp)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse message timestamp %q: %w", msgs[len(msgs)-1].Timestamp, err)
-	}
-	return ts, nil
-}
-
-// noMentions disables Discord mention parsing for an outbound message body. Bot
-// replies echo Claude/tool output verbatim, so without this an "@everyone"/"@here"
-// or a "<@id>" appearing in that text (a filename, a quoted user message, anything
-// Claude prints) would ping real members. Attached to every content-bearing
-// payload the bot posts or edits.
-var noMentions = map[string]any{"parse": []string{}}
-
-func (c *Client) post(ctx context.Context, channelID string, body map[string]any) (*Message, error) {
-	if !c.Enabled() {
-		return nil, ErrDisabled
-	}
-	if _, ok := body["allowed_mentions"]; !ok {
-		body["allowed_mentions"] = noMentions
-	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/channels/"+channelID+"/messages", body)
-	if err != nil {
-		return nil, err
-	}
-	var msg Message
-	if err := c.do(req, &msg); err != nil {
-		return nil, err
-	}
-	return &msg, nil
-}
-
-func (c *Client) resolveChannel(channelID string) (string, error) {
-	if channelID != "" {
-		return channelID, nil
-	}
-	if c.defaultChannel == "" {
-		return "", ErrNoChannel
-	}
-	return c.defaultChannel, nil
-}
-
-func (c *Client) newRequest(ctx context.Context, method, path string, body any) (*http.Request, error) {
-	var rdr io.Reader
-	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		rdr = bytes.NewReader(buf)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, APIBase+path, rdr)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bot "+c.token)
-	req.Header.Set("User-Agent", "dctl (https://github.com/Akayashuu/dctl, 1.0)")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return req, nil
-}
-
-func (c *Client) do(req *http.Request, out any) error {
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("discord %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	if out == nil || len(respBody) == 0 {
-		return nil
-	}
-	return json.Unmarshal(respBody, out)
-}
+// Sub-client accessors. Each shares the transport and (where relevant) the
+// default channel/guild resolver.
+func (c *Client) Guilds() *Guilds             { return c.guilds }
+func (c *Client) Messages() *Messages         { return &Messages{rt: c.rt, def: c.def} }
+func (c *Client) Channels() *Channels         { return &Channels{rt: c.rt, def: c.def} }
+func (c *Client) Roles() *Roles               { return &Roles{rt: c.rt, def: c.def} }
+func (c *Client) Members() *Members           { return &Members{rt: c.rt, def: c.def} }
+func (c *Client) Reactions() *Reactions       { return &Reactions{rt: c.rt, def: c.def} }
+func (c *Client) Threads() *Threads           { return &Threads{rt: c.rt, def: c.def} }
+func (c *Client) Permissions() *Permissions   { return &Permissions{rt: c.rt} }
+func (c *Client) Webhooks() *Webhooks         { return &Webhooks{rt: c.rt} }
+func (c *Client) Interactions() *Interactions { return &Interactions{rt: c.rt, def: c.def} }
+func (c *Client) Components() *Components     { return &Components{rt: c.rt, def: c.def} }

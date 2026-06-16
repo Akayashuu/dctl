@@ -2,7 +2,10 @@ package dctl
 
 import (
 	"context"
+	"errors"
 	"net/http"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Interaction type constants we care about (Discord interaction-type field).
@@ -17,7 +20,7 @@ const (
 type Interaction struct {
 	ID        string          `json:"id"`
 	Type      int             `json:"type"`
-	Token     string          `json:"token"`
+	Token     Secret          `json:"token"`
 	GuildID   string          `json:"guild_id"`
 	ChannelID string          `json:"channel_id"`
 	Member    Member          `json:"member"`
@@ -54,6 +57,13 @@ type InteractionOption struct {
 type Response struct {
 	Content   string
 	Ephemeral bool
+}
+
+// AutocompleteChoice is one suggestion returned for an autocomplete interaction.
+// Name is shown in the picker; Value is what gets submitted.
+type AutocompleteChoice struct {
+	Name  string
+	Value string
 }
 
 // Opt returns the string value of a (possibly nested) option by name.
@@ -126,16 +136,18 @@ func (d InteractionData) Subcommand() (string, []InteractionOption) {
 	return "", nil
 }
 
+// Interactions is the sub-client for Discord interaction endpoints.
+type Interactions struct {
+	rt  transport.Doer
+	def *defaults
+}
+
 // AppID returns the bot's application id (== bot user id) via /users/@me.
-func (c *Client) AppID(ctx context.Context) (string, error) {
-	req, err := c.newRequest(ctx, http.MethodGet, "/users/@me", nil)
-	if err != nil {
-		return "", err
-	}
+func (in *Interactions) AppID(ctx context.Context) (string, error) {
 	var u struct {
 		ID string `json:"id"`
 	}
-	if err := c.do(req, &u); err != nil {
+	if err := in.rt.Do(ctx, http.MethodGet, "/users/@me", nil, &u); err != nil {
 		return "", err
 	}
 	return u.ID, nil
@@ -143,67 +155,43 @@ func (c *Client) AppID(ctx context.Context) (string, error) {
 
 // RegisterCommands (re)registers the given guild-scoped slash command set for the
 // sole guild (guild-scoped commands appear instantly, unlike global ones).
-func (c *Client) RegisterCommands(ctx context.Context, commands []map[string]any) error {
-	appID, err := c.AppID(ctx)
+func (in *Interactions) RegisterCommands(ctx context.Context, commands []map[string]any) error {
+	appID, err := in.AppID(ctx)
 	if err != nil {
 		return err
 	}
-	g, err := c.SoleGuild(ctx)
+	gid, err := in.def.resolveGuild(ctx, "")
 	if err != nil {
 		return err
 	}
-	req, err := c.newRequest(ctx, http.MethodPut,
-		"/applications/"+appID+"/guilds/"+g.ID+"/commands", commands)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
+	return in.rt.Do(ctx, http.MethodPut, "/applications/"+seg(appID)+"/guilds/"+seg(gid)+"/commands", commands, nil)
 }
 
-// RespondInteraction sends a CHANNEL_MESSAGE_WITH_SOURCE (type 4) reply.
-func (c *Client) RespondInteraction(ctx context.Context, id, token string, r Response) error {
-	data := map[string]any{"content": r.Content, "allowed_mentions": noMentions}
+// Respond sends a CHANNEL_MESSAGE_WITH_SOURCE (type 4) reply.
+func (in *Interactions) Respond(ctx context.Context, id, token string, r Response) error {
+	data := map[string]any{"content": r.Content}
 	if r.Ephemeral {
-		data["flags"] = 1 << 6 // EPHEMERAL
+		data["flags"] = 1 << 6
 	}
-	body := map[string]any{"type": 4, "data": data}
-	req, err := c.newRequest(ctx, http.MethodPost,
-		"/interactions/"+id+"/"+token+"/callback", body)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
+	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback",
+		map[string]any{"type": 4, "data": data}, nil)
 }
 
-// DeferInteraction acknowledges an interaction with a DEFERRED_CHANNEL_MESSAGE_
-// WITH_SOURCE (type 5) so the daemon has up to 15 minutes to produce the real
-// reply (slow clones/network) instead of Discord's 3s callback deadline. The
-// ephemeral flag must match the eventual reply's visibility.
-func (c *Client) DeferInteraction(ctx context.Context, id, token string, ephemeral bool) error {
+// Defer acknowledges an interaction with a DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE
+// (type 5). The ephemeral flag must match the eventual reply's visibility.
+func (in *Interactions) Defer(ctx context.Context, id, token string, ephemeral bool) error {
 	data := map[string]any{}
 	if ephemeral {
-		data["flags"] = 1 << 6 // EPHEMERAL
+		data["flags"] = 1 << 6
 	}
-	body := map[string]any{"type": 5, "data": data}
-	req, err := c.newRequest(ctx, http.MethodPost,
-		"/interactions/"+id+"/"+token+"/callback", body)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
-}
-
-// AutocompleteChoice is one suggestion returned for an autocomplete interaction.
-// Name is shown in the picker; Value is what gets submitted.
-type AutocompleteChoice struct {
-	Name  string
-	Value string
+	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback",
+		map[string]any{"type": 5, "data": data}, nil)
 }
 
 // RespondAutocomplete sends an APPLICATION_COMMAND_AUTOCOMPLETE_RESULT (type 8)
 // reply carrying the suggestion list. Discord accepts at most 25 choices; extras
 // are dropped here so callers need not pre-trim.
-func (c *Client) RespondAutocomplete(ctx context.Context, id, token string, choices []AutocompleteChoice) error {
+func (in *Interactions) RespondAutocomplete(ctx context.Context, id, token string, choices []AutocompleteChoice) error {
 	if len(choices) > 25 {
 		choices = choices[:25]
 	}
@@ -211,44 +199,36 @@ func (c *Client) RespondAutocomplete(ctx context.Context, id, token string, choi
 	for _, ch := range choices {
 		cs = append(cs, map[string]any{"name": ch.Name, "value": ch.Value})
 	}
-	body := map[string]any{"type": 8, "data": map[string]any{"choices": cs}}
-	req, err := c.newRequest(ctx, http.MethodPost,
-		"/interactions/"+id+"/"+token+"/callback", body)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
+	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback",
+		map[string]any{"type": 8, "data": map[string]any{"choices": cs}}, nil)
 }
 
-// EditInteractionResponse fills in the deferred reply by editing the original
-// interaction response via the webhook endpoint. appID is the bot's application
-// id (see AppID); the interaction token authorizes the edit for ~15 minutes.
-func (c *Client) EditInteractionResponse(ctx context.Context, appID, token string, r Response) error {
-	req, err := c.newRequest(ctx, http.MethodPatch,
-		"/webhooks/"+appID+"/"+token+"/messages/@original",
-		map[string]any{"content": r.Content, "allowed_mentions": noMentions})
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
+// EditResponse fills in the deferred reply by editing the original interaction
+// response via the webhook endpoint. appID is the bot's application id (see
+// AppID); the interaction token authorizes the edit for ~15 minutes.
+func (in *Interactions) EditResponse(ctx context.Context, appID, token string, r Response) error {
+	return in.rt.Do(ctx, http.MethodPatch, "/webhooks/"+seg(appID)+"/"+seg(token)+"/messages/@original",
+		map[string]any{"content": r.Content}, nil)
 }
 
-// UpsertStatusMessage edits the existing status message (if msgID is set and
-// still exists) or sends a new one, returning the live message id.
-func (c *Client) UpsertStatusMessage(ctx context.Context, channelID, msgID, content string) (string, error) {
+// UpsertStatusMessage edits the existing status message or sends a new one,
+// returning the live message id.
+func (in *Interactions) UpsertStatusMessage(ctx context.Context, channelID, msgID, content string) (string, error) {
 	if msgID != "" {
-		req, err := c.newRequest(ctx, http.MethodPatch,
-			"/channels/"+channelID+"/messages/"+msgID, map[string]any{"content": content, "allowed_mentions": noMentions})
+		err := in.rt.Do(ctx, http.MethodPatch, "/channels/"+seg(channelID)+"/messages/"+seg(msgID),
+			map[string]any{"content": content}, nil)
 		if err == nil {
-			if err := c.do(req, nil); err == nil {
-				return msgID, nil
-			}
+			return msgID, nil
 		}
-		// fall through to re-create if the edit failed (message deleted)
+		var apiErr *transport.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+			return "", err
+		}
 	}
-	m, err := c.Send(ctx, channelID, content)
-	if err != nil {
+	var msg Message
+	if err := in.rt.Do(ctx, http.MethodPost, "/channels/"+seg(channelID)+"/messages",
+		map[string]any{"content": content}, &msg); err != nil {
 		return "", err
 	}
-	return m.ID, nil
+	return msg.ID, nil
 }
