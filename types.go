@@ -48,10 +48,11 @@ type Guild struct {
 
 // Channel is a Discord channel. Type 0 is a text channel.
 type Channel struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Type    int    `json:"type"`
-	GuildID string `json:"guild_id,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     int    `json:"type"`
+	GuildID  string `json:"guild_id,omitempty"`
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 // Role is a Discord guild role.

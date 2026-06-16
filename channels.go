@@ -111,6 +111,22 @@ func (c *Channels) Ensure(ctx context.Context, guildID, name string) (*Channel, 
 	return c.Create(ctx, guildID, name)
 }
 
+// EnsureUnder returns the text channel named name nested under category parentID,
+// creating it there if absent. Matching is case-insensitive and scoped to the
+// parent so the same name can exist under different categories.
+func (c *Channels) EnsureUnder(ctx context.Context, parentID, name string) (*Channel, error) {
+	chs, err := c.List(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range chs {
+		if chs[i].Type == ChannelText && chs[i].ParentID == parentID && strings.EqualFold(chs[i].Name, name) {
+			return &chs[i], nil
+		}
+	}
+	return c.CreateUnder(ctx, parentID, name)
+}
+
 // Archive archives a thread/forum-post, or deletes a plain text channel
 // (text channels don't support PATCH {archived:true}).
 func (c *Channels) Archive(ctx context.Context, channelID string) error {
