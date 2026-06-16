@@ -67,56 +67,6 @@ func (c *Client) DefaultChannel() string {
 	return c.defaultChannel
 }
 
-// noMentions disables Discord mention parsing for outbound messages from
-// transitional callers (interactions.go, components.go). Removed from Messages
-// sub-client (Task 6).
-var noMentions = map[string]any{"parse": []string{}}
-
-// post is a transitional shim used by components.go until it is rewritten as a
-// Messages sub-client. New code should use Messages.post instead.
-func (c *Client) post(ctx context.Context, channelID string, body map[string]any) (*Message, error) {
-	if !c.Enabled() {
-		return nil, ErrDisabled
-	}
-	if _, ok := body["allowed_mentions"]; !ok {
-		body["allowed_mentions"] = noMentions
-	}
-	req, err := c.newRequest(ctx, http.MethodPost, "/channels/"+channelID+"/messages", body)
-	if err != nil {
-		return nil, err
-	}
-	var msg Message
-	if err := c.do(req, &msg); err != nil {
-		return nil, err
-	}
-	return &msg, nil
-}
-
-func (c *Client) resolveGuild(ctx context.Context, guildID string) (string, error) {
-	if !c.Enabled() {
-		return "", ErrDisabled
-	}
-	if guildID != "" {
-		return guildID, nil
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, "/users/@me/guilds", nil)
-	if err != nil {
-		return "", err
-	}
-	var gs []Guild
-	if err := c.do(req, &gs); err != nil {
-		return "", err
-	}
-	switch len(gs) {
-	case 1:
-		return gs[0].ID, nil
-	case 0:
-		return "", fmt.Errorf("dctl: bot is in no server (invite it first)")
-	default:
-		return "", fmt.Errorf("dctl: bot is in %d servers; pass a guild id", len(gs))
-	}
-}
-
 func (c *Client) resolveChannel(channelID string) (string, error) {
 	if channelID != "" {
 		return channelID, nil
