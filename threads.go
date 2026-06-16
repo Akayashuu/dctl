@@ -17,7 +17,7 @@ type Threads struct {
 // auto_archive_duration is set to 1440 minutes (24 h).
 func (t *Threads) Start(ctx context.Context, channelID, messageID, name string) (*Channel, error) {
 	var ch Channel
-	if err := t.rt.Do(ctx, http.MethodPost, "/channels/"+channelID+"/messages/"+messageID+"/threads",
+	if err := t.rt.Do(ctx, http.MethodPost, "/channels/"+seg(channelID)+"/messages/"+seg(messageID)+"/threads",
 		map[string]any{"name": name, "auto_archive_duration": autoArchive}, &ch); err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func (t *Threads) CreateForum(ctx context.Context, guildID, name string) (*Chann
 		return nil, err
 	}
 	var ch Channel
-	if err := t.rt.Do(ctx, http.MethodPost, "/guilds/"+gid+"/channels",
+	if err := t.rt.Do(ctx, http.MethodPost, "/guilds/"+seg(gid)+"/channels",
 		map[string]any{"name": name, "type": ChannelForum}, &ch); err != nil {
 		return nil, err
 	}
@@ -41,7 +41,7 @@ func (t *Threads) CreateForum(ctx context.Context, guildID, name string) (*Chann
 // ForumPost creates a thread (post) in forum forumID with an initial message.
 func (t *Threads) ForumPost(ctx context.Context, forumID, name, content string) (*Channel, error) {
 	var ch Channel
-	if err := t.rt.Do(ctx, http.MethodPost, "/channels/"+forumID+"/threads",
+	if err := t.rt.Do(ctx, http.MethodPost, "/channels/"+seg(forumID)+"/threads",
 		map[string]any{"name": name, "message": map[string]any{"content": content}}, &ch); err != nil {
 		return nil, err
 	}

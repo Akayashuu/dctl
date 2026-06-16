@@ -164,7 +164,7 @@ func (in *Interactions) RegisterCommands(ctx context.Context, commands []map[str
 	if err != nil {
 		return err
 	}
-	return in.rt.Do(ctx, http.MethodPut, "/applications/"+appID+"/guilds/"+gid+"/commands", commands, nil)
+	return in.rt.Do(ctx, http.MethodPut, "/applications/"+seg(appID)+"/guilds/"+seg(gid)+"/commands", commands, nil)
 }
 
 // Respond sends a CHANNEL_MESSAGE_WITH_SOURCE (type 4) reply.
@@ -173,7 +173,7 @@ func (in *Interactions) Respond(ctx context.Context, id, token string, r Respons
 	if r.Ephemeral {
 		data["flags"] = 1 << 6
 	}
-	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+id+"/"+token+"/callback",
+	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback",
 		map[string]any{"type": 4, "data": data}, nil)
 }
 
@@ -184,7 +184,7 @@ func (in *Interactions) Defer(ctx context.Context, id, token string, ephemeral b
 	if ephemeral {
 		data["flags"] = 1 << 6
 	}
-	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+id+"/"+token+"/callback",
+	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback",
 		map[string]any{"type": 5, "data": data}, nil)
 }
 
@@ -199,7 +199,7 @@ func (in *Interactions) RespondAutocomplete(ctx context.Context, id, token strin
 	for _, ch := range choices {
 		cs = append(cs, map[string]any{"name": ch.Name, "value": ch.Value})
 	}
-	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+id+"/"+token+"/callback",
+	return in.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback",
 		map[string]any{"type": 8, "data": map[string]any{"choices": cs}}, nil)
 }
 
@@ -207,7 +207,7 @@ func (in *Interactions) RespondAutocomplete(ctx context.Context, id, token strin
 // response via the webhook endpoint. appID is the bot's application id (see
 // AppID); the interaction token authorizes the edit for ~15 minutes.
 func (in *Interactions) EditResponse(ctx context.Context, appID, token string, r Response) error {
-	return in.rt.Do(ctx, http.MethodPatch, "/webhooks/"+appID+"/"+token+"/messages/@original",
+	return in.rt.Do(ctx, http.MethodPatch, "/webhooks/"+seg(appID)+"/"+seg(token)+"/messages/@original",
 		map[string]any{"content": r.Content}, nil)
 }
 
@@ -215,7 +215,7 @@ func (in *Interactions) EditResponse(ctx context.Context, appID, token string, r
 // returning the live message id.
 func (in *Interactions) UpsertStatusMessage(ctx context.Context, channelID, msgID, content string) (string, error) {
 	if msgID != "" {
-		err := in.rt.Do(ctx, http.MethodPatch, "/channels/"+channelID+"/messages/"+msgID,
+		err := in.rt.Do(ctx, http.MethodPatch, "/channels/"+seg(channelID)+"/messages/"+seg(msgID),
 			map[string]any{"content": content}, nil)
 		if err == nil {
 			return msgID, nil
@@ -226,7 +226,7 @@ func (in *Interactions) UpsertStatusMessage(ctx context.Context, channelID, msgI
 		}
 	}
 	var msg Message
-	if err := in.rt.Do(ctx, http.MethodPost, "/channels/"+channelID+"/messages",
+	if err := in.rt.Do(ctx, http.MethodPost, "/channels/"+seg(channelID)+"/messages",
 		map[string]any{"content": content}, &msg); err != nil {
 		return "", err
 	}

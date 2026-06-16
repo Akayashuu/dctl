@@ -29,6 +29,6 @@ func (r *Reactions) do(ctx context.Context, method, channelID, messageID, emoji 
 	if err != nil {
 		return err
 	}
-	path := "/channels/" + ch + "/messages/" + messageID + "/reactions/" + url.PathEscape(emoji) + "/@me"
+	path := "/channels/" + seg(ch) + "/messages/" + seg(messageID) + "/reactions/" + url.PathEscape(emoji) + "/@me"
 	return r.rt.Do(ctx, method, path, nil, nil)
 }

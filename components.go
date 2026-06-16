@@ -57,7 +57,7 @@ func (c *Components) SendSelectMenu(ctx context.Context, channelID, replyTo, con
 		body["message_reference"] = map[string]any{"message_id": replyTo, "fail_if_not_exists": false}
 	}
 	var msg Message
-	if err := c.rt.Do(ctx, http.MethodPost, "/channels/"+ch+"/messages", body, &msg); err != nil {
+	if err := c.rt.Do(ctx, http.MethodPost, "/channels/"+seg(ch)+"/messages", body, &msg); err != nil {
 		return nil, err
 	}
 	return &msg, nil
@@ -71,7 +71,7 @@ func (c *Components) Ack(ctx context.Context, id, token, content string) error {
 		"type": 7,
 		"data": map[string]any{"content": content, "components": []any{}},
 	}
-	return c.rt.Do(ctx, http.MethodPost, "/interactions/"+id+"/"+token+"/callback", body, nil)
+	return c.rt.Do(ctx, http.MethodPost, "/interactions/"+seg(id)+"/"+seg(token)+"/callback", body, nil)
 }
 
 // clamp truncates s to at most max runes without splitting a multibyte rune.

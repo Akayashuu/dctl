@@ -28,7 +28,7 @@ func (c *Channels) List(ctx context.Context, guildID string) ([]Channel, error) 
 		return nil, err
 	}
 	var chs []Channel
-	if err := c.rt.Do(ctx, http.MethodGet, "/guilds/"+gid+"/channels", nil, &chs); err != nil {
+	if err := c.rt.Do(ctx, http.MethodGet, "/guilds/"+seg(gid)+"/channels", nil, &chs); err != nil {
 		return nil, err
 	}
 	return chs, nil
@@ -37,7 +37,7 @@ func (c *Channels) List(ctx context.Context, guildID string) ([]Channel, error) 
 // Get returns a channel by id.
 func (c *Channels) Get(ctx context.Context, channelID string) (*Channel, error) {
 	var ch Channel
-	if err := c.rt.Do(ctx, http.MethodGet, "/channels/"+channelID, nil, &ch); err != nil {
+	if err := c.rt.Do(ctx, http.MethodGet, "/channels/"+seg(channelID), nil, &ch); err != nil {
 		return nil, err
 	}
 	return &ch, nil
@@ -68,7 +68,7 @@ func (c *Channels) create(ctx context.Context, guildID string, body map[string]a
 		return nil, err
 	}
 	var ch Channel
-	if err := c.rt.Do(ctx, http.MethodPost, "/guilds/"+gid+"/channels", body, &ch); err != nil {
+	if err := c.rt.Do(ctx, http.MethodPost, "/guilds/"+seg(gid)+"/channels", body, &ch); err != nil {
 		return nil, err
 	}
 	return &ch, nil
@@ -82,7 +82,7 @@ func (c *Channels) Rename(ctx context.Context, channelID, name string) (*Channel
 // Update PATCHes arbitrary channel fields (name, parent_id, topic, position…).
 func (c *Channels) Update(ctx context.Context, channelID string, fields map[string]any) (*Channel, error) {
 	var ch Channel
-	if err := c.rt.Do(ctx, http.MethodPatch, "/channels/"+channelID, fields, &ch); err != nil {
+	if err := c.rt.Do(ctx, http.MethodPatch, "/channels/"+seg(channelID), fields, &ch); err != nil {
 		return nil, err
 	}
 	return &ch, nil
@@ -93,7 +93,7 @@ func (c *Channels) Delete(ctx context.Context, channelID string) error {
 	if channelID == "" {
 		return ErrNoChannel
 	}
-	return c.rt.Do(ctx, http.MethodDelete, "/channels/"+channelID, nil, nil)
+	return c.rt.Do(ctx, http.MethodDelete, "/channels/"+seg(channelID), nil, nil)
 }
 
 // Ensure returns the text channel named name in the guild, creating it if absent.
@@ -119,7 +119,7 @@ func (c *Channels) Archive(ctx context.Context, channelID string) error {
 		return err
 	}
 	if ct == 10 || ct == 11 || ct == 12 {
-		return c.rt.Do(ctx, http.MethodPatch, "/channels/"+channelID, map[string]any{"archived": true}, nil)
+		return c.rt.Do(ctx, http.MethodPatch, "/channels/"+seg(channelID), map[string]any{"archived": true}, nil)
 	}
 	return c.Delete(ctx, channelID)
 }

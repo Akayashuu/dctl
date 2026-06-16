@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/Herrscherd/dctl/internal/transport"
@@ -34,7 +36,7 @@ func (m *Messages) post(ctx context.Context, channelID string, body map[string]a
 		return nil, err
 	}
 	var msg Message
-	if err := m.rt.Do(ctx, http.MethodPost, "/channels/"+ch+"/messages", body, &msg); err != nil {
+	if err := m.rt.Do(ctx, http.MethodPost, "/channels/"+seg(ch)+"/messages", body, &msg); err != nil {
 		return nil, err
 	}
 	return &msg, nil
@@ -51,10 +53,12 @@ func (m *Messages) Read(ctx context.Context, channelID string, limit int, after 
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
-	path := fmt.Sprintf("/channels/%s/messages?limit=%d", ch, limit)
+	q := url.Values{}
+	q.Set("limit", strconv.Itoa(limit))
 	if after != "" {
-		path += "&after=" + after
+		q.Set("after", after)
 	}
+	path := "/channels/" + seg(ch) + "/messages?" + q.Encode()
 	var msgs []Message
 	if err := m.rt.Do(ctx, http.MethodGet, path, nil, &msgs); err != nil {
 		return nil, err
@@ -72,7 +76,7 @@ func (m *Messages) Edit(ctx context.Context, channelID, messageID, content strin
 		return nil, err
 	}
 	var msg Message
-	if err := m.rt.Do(ctx, http.MethodPatch, "/channels/"+ch+"/messages/"+messageID,
+	if err := m.rt.Do(ctx, http.MethodPatch, "/channels/"+seg(ch)+"/messages/"+seg(messageID),
 		map[string]any{"content": content}, &msg); err != nil {
 		return nil, err
 	}
@@ -85,7 +89,7 @@ func (m *Messages) Delete(ctx context.Context, channelID, messageID string) erro
 	if err != nil {
 		return err
 	}
-	return m.rt.Do(ctx, http.MethodDelete, "/channels/"+ch+"/messages/"+messageID, nil, nil)
+	return m.rt.Do(ctx, http.MethodDelete, "/channels/"+seg(ch)+"/messages/"+seg(messageID), nil, nil)
 }
 
 // LastMessageAt returns the timestamp of the channel's most recent message, or

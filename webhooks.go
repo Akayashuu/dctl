@@ -40,11 +40,11 @@ func (w *Webhooks) List(ctx context.Context, channelID string) ([]Webhook, error
 
 // Delete removes a webhook by id.
 func (w *Webhooks) Delete(ctx context.Context, webhookID string) error {
-	return w.rt.Do(ctx, http.MethodDelete, "/webhooks/"+webhookID, nil, nil)
+	return w.rt.Do(ctx, http.MethodDelete, "/webhooks/"+seg(webhookID), nil, nil)
 }
 
 // Execute posts content through a webhook using its id+token.
 func (w *Webhooks) Execute(ctx context.Context, webhookID, token, content string) error {
-	return w.rt.Do(ctx, http.MethodPost, "/webhooks/"+webhookID+"/"+token,
+	return w.rt.Do(ctx, http.MethodPost, "/webhooks/"+seg(webhookID)+"/"+seg(token),
 		map[string]any{"content": content}, nil)
 }

@@ -21,7 +21,7 @@ func (r *Roles) List(ctx context.Context, guildID string) ([]Role, error) {
 		return nil, err
 	}
 	var rs []Role
-	if err := r.rt.Do(ctx, http.MethodGet, "/guilds/"+gid+"/roles", nil, &rs); err != nil {
+	if err := r.rt.Do(ctx, http.MethodGet, "/guilds/"+seg(gid)+"/roles", nil, &rs); err != nil {
 		return nil, err
 	}
 	return rs, nil
@@ -34,7 +34,7 @@ func (r *Roles) Create(ctx context.Context, guildID, name string) (*Role, error)
 		return nil, err
 	}
 	var role Role
-	if err := r.rt.Do(ctx, http.MethodPost, "/guilds/"+gid+"/roles",
+	if err := r.rt.Do(ctx, http.MethodPost, "/guilds/"+seg(gid)+"/roles",
 		map[string]any{"name": name}, &role); err != nil {
 		return nil, err
 	}
@@ -48,7 +48,7 @@ func (r *Roles) Update(ctx context.Context, guildID, roleID string, fields map[s
 		return nil, err
 	}
 	var role Role
-	if err := r.rt.Do(ctx, http.MethodPatch, "/guilds/"+gid+"/roles/"+roleID, fields, &role); err != nil {
+	if err := r.rt.Do(ctx, http.MethodPatch, "/guilds/"+seg(gid)+"/roles/"+seg(roleID), fields, &role); err != nil {
 		return nil, err
 	}
 	return &role, nil
@@ -60,7 +60,7 @@ func (r *Roles) Delete(ctx context.Context, guildID, roleID string) error {
 	if err != nil {
 		return err
 	}
-	return r.rt.Do(ctx, http.MethodDelete, "/guilds/"+gid+"/roles/"+roleID, nil, nil)
+	return r.rt.Do(ctx, http.MethodDelete, "/guilds/"+seg(gid)+"/roles/"+seg(roleID), nil, nil)
 }
 
 // Assign grants roleID to member userID.
@@ -69,7 +69,7 @@ func (r *Roles) Assign(ctx context.Context, guildID, userID, roleID string) erro
 	if err != nil {
 		return err
 	}
-	return r.rt.Do(ctx, http.MethodPut, "/guilds/"+gid+"/members/"+userID+"/roles/"+roleID, nil, nil)
+	return r.rt.Do(ctx, http.MethodPut, "/guilds/"+seg(gid)+"/members/"+seg(userID)+"/roles/"+seg(roleID), nil, nil)
 }
 
 // Unassign removes roleID from member userID.
@@ -78,5 +78,5 @@ func (r *Roles) Unassign(ctx context.Context, guildID, userID, roleID string) er
 	if err != nil {
 		return err
 	}
-	return r.rt.Do(ctx, http.MethodDelete, "/guilds/"+gid+"/members/"+userID+"/roles/"+roleID, nil, nil)
+	return r.rt.Do(ctx, http.MethodDelete, "/guilds/"+seg(gid)+"/members/"+seg(userID)+"/roles/"+seg(roleID), nil, nil)
 }
