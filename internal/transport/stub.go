@@ -14,7 +14,7 @@ type Call struct {
 }
 
 // Stub is an in-memory Doer for tests: it records calls and replays canned
-// JSON responses or errors in FIFO order. The zero value is unusable; use NewStub.
+// JSON responses or errors in FIFO order. NewStub returns a ready Stub; the zero value also works.
 type Stub struct {
 	calls   []Call
 	replies []string
@@ -25,7 +25,7 @@ type Stub struct {
 func NewStub() *Stub { return &Stub{} }
 
 // Reply queues a canned JSON response body (consumed in order by Do).
-func (s *Stub) Reply(json string) *Stub { s.replies = append(s.replies, json); return s }
+func (s *Stub) Reply(raw string) *Stub { s.replies = append(s.replies, raw); return s }
 
 // Fail makes the next (and every) Do return err.
 func (s *Stub) Fail(err error) *Stub { s.err = err; return s }
