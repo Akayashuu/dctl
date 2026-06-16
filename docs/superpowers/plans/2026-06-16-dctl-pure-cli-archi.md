@@ -216,7 +216,7 @@ func (h *HTTP) Do(ctx context.Context, method, path string, body, out any) error
 		return err
 	}
 	req.Header.Set("Authorization", "Bot "+h.token)
-	req.Header.Set("User-Agent", "dctl (https://github.com/Akayashuu/dctl, 1.0)")
+	req.Header.Set("User-Agent", "dctl (https://github.com/Herrscherd/dctl, 1.0)")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -388,7 +388,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestResolveChannelPrefersExplicit(t *testing.T) {
@@ -564,7 +564,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestGuildsList(t *testing.T) {
@@ -607,7 +607,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Guilds lists and resolves the bot's servers.
@@ -672,7 +672,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func chans(s *transport.Stub) *Channels {
@@ -741,7 +741,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Channel type constants.
@@ -891,7 +891,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func msgs(s *transport.Stub, def string) *Messages {
@@ -967,7 +967,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Messages CRUDs channel messages.
@@ -1098,7 +1098,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestReactionsAddEncodesEmoji(t *testing.T) {
@@ -1142,7 +1142,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Reactions adds/removes the bot's reactions on a message.
@@ -1198,7 +1198,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func thr(s *transport.Stub) *Threads {
@@ -1245,7 +1245,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Threads creates threads and forum posts.
@@ -1321,7 +1321,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestComponentsSendSelectMenu(t *testing.T) {
@@ -1358,7 +1358,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // SelectOption is one entry in a select menu.
@@ -1442,7 +1442,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestInteractionsRespondNoAllowedMentions(t *testing.T) {
@@ -1602,7 +1602,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func roles(s *transport.Stub) *Roles {
@@ -1677,7 +1677,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Roles CRUDs guild roles and assigns them to members.
@@ -1784,7 +1784,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func members(s *transport.Stub) *Members {
@@ -1844,7 +1844,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Members lists and moderates guild members.
@@ -1932,7 +1932,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestPermissionsSetOverwrite(t *testing.T) {
@@ -1981,7 +1981,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Permissions edits channel permission overwrites.
@@ -2039,7 +2039,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestWebhooksCreate(t *testing.T) {
@@ -2112,7 +2112,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Webhook is a Discord channel webhook.
@@ -2187,7 +2187,7 @@ package dctl
 import (
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestNewWiresSubClientsWithSharedDefaults(t *testing.T) {
@@ -2238,7 +2238,7 @@ package dctl
 import (
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Client is the dctl façade: it wires the HTTP transport into per-resource
@@ -2351,7 +2351,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestLastMessageAtReturnsZeroWhenEmpty(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Reactions adds/removes the bot's reactions on a message.

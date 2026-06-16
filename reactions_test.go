@@ -5,7 +5,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestReactionsAddEncodesEmoji(t *testing.T) {

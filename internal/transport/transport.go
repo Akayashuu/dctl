@@ -72,7 +72,7 @@ func (h *HTTP) Do(ctx context.Context, method, path string, body, out any) error
 		return err
 	}
 	req.Header.Set("Authorization", "Bot "+h.token)
-	req.Header.Set("User-Agent", "dctl (https://github.com/Akayashuu/dctl, 1.0)")
+	req.Header.Set("User-Agent", "dctl (https://github.com/Herrscherd/dctl, 1.0)")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

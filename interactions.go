@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Interaction type constants we care about (Discord interaction-type field).

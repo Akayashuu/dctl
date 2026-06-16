@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Guilds lists and resolves the bot's servers.

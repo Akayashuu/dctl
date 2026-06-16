@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestComponentsSendSelectMenu(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func TestFocusedFindsNestedOption(t *testing.T) {

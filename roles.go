@@ -5,7 +5,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // Roles CRUDs guild roles and assigns them to members.

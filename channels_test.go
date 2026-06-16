@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 func chans(s *transport.Stub) *Channels {

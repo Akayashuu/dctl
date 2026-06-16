@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Akayashuu/dctl/internal/transport"
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
 // SelectOption is one entry in a select menu: Label is shown in the dropdown,
