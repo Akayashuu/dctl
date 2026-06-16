@@ -67,90 +67,13 @@ func (c *Client) DefaultChannel() string {
 	return c.defaultChannel
 }
 
-// Send posts content to channelID (or the default channel when empty) and
-// returns the created message.
-func (c *Client) Send(ctx context.Context, channelID, content string) (*Message, error) {
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-	return c.post(ctx, ch, map[string]any{"content": content})
-}
-
-// Reply posts content as a threaded reply to messageID in channelID (or the
-// default channel).
-func (c *Client) Reply(ctx context.Context, channelID, messageID, content string) (*Message, error) {
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-	return c.post(ctx, ch, map[string]any{
-		"content":           content,
-		"message_reference": map[string]any{"message_id": messageID, "fail_if_not_exists": false},
-	})
-}
-
-// Read returns up to limit (1..100, default 50) recent messages from channelID
-// (or the default channel), oldest-first (chronological — natural to read).
-// When after is non-empty, only messages strictly newer than that id are
-// returned (for polling).
-func (c *Client) Read(ctx context.Context, channelID string, limit int, after string) ([]Message, error) {
-	if !c.Enabled() {
-		return nil, ErrDisabled
-	}
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 || limit > 100 {
-		limit = 50
-	}
-	path := fmt.Sprintf("/channels/%s/messages?limit=%d", ch, limit)
-	if after != "" {
-		path += "&after=" + after
-	}
-	req, err := c.newRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
-	}
-	var msgs []Message
-	if err := c.do(req, &msgs); err != nil {
-		return nil, err
-	}
-	// Discord returns newest-first; reverse to chronological order.
-	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
-		msgs[i], msgs[j] = msgs[j], msgs[i]
-	}
-	return msgs, nil
-}
-
-// LastMessageAt returns the timestamp of the channel's most recent message, or
-// the zero Time if the channel has no messages. It is the inactivity signal for
-// `session clean` (no persistent LastActive is stored on a session). A transport
-// or decode error is returned so callers can stay conservative and NOT treat the
-// session as stale on failure.
-func (c *Client) LastMessageAt(ctx context.Context, channelID string) (time.Time, error) {
-	msgs, err := c.Read(ctx, channelID, 1, "")
-	if err != nil {
-		return time.Time{}, err
-	}
-	if len(msgs) == 0 {
-		return time.Time{}, nil
-	}
-	ts, err := time.Parse(time.RFC3339, msgs[len(msgs)-1].Timestamp)
-	if err != nil {
-		return time.Time{}, fmt.Errorf("parse message timestamp %q: %w", msgs[len(msgs)-1].Timestamp, err)
-	}
-	return ts, nil
-}
-
-// noMentions disables Discord mention parsing for an outbound message body. Bot
-// replies echo Claude/tool output verbatim, so without this an "@everyone"/"@here"
-// or a "<@id>" appearing in that text (a filename, a quoted user message, anything
-// Claude prints) would ping real members. Attached to every content-bearing
-// payload the bot posts or edits.
+// noMentions disables Discord mention parsing for outbound messages from
+// transitional callers (interactions.go, components.go). Removed from Messages
+// sub-client (Task 6).
 var noMentions = map[string]any{"parse": []string{}}
 
+// post is a transitional shim used by components.go until it is rewritten as a
+// Messages sub-client. New code should use Messages.post instead.
 func (c *Client) post(ctx context.Context, channelID string, body map[string]any) (*Message, error) {
 	if !c.Enabled() {
 		return nil, ErrDisabled

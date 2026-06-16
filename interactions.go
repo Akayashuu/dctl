@@ -246,7 +246,7 @@ func (c *Client) UpsertStatusMessage(ctx context.Context, channelID, msgID, cont
 		}
 		// fall through to re-create if the edit failed (message deleted)
 	}
-	m, err := c.Send(ctx, channelID, content)
+	m, err := c.post(ctx, channelID, map[string]any{"content": content})
 	if err != nil {
 		return "", err
 	}
