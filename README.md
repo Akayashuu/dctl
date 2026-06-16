@@ -5,7 +5,7 @@ no websocket, no CLI — every call is an on-demand HTTP request behind a small,
 ergonomic API.
 
 ```sh
-go get github.com/Herrscherd/dctl@v1.0.1
+go get github.com/Herrscherd/dctl@v1.1.0
 ```
 
 ```go
@@ -51,9 +51,46 @@ import.
 | `c.Threads()` | `Start` · `CreateForum` · `ForumPost` |
 | `c.Permissions()` | `Set` · `Remove` |
 | `c.Webhooks()` | `Create` · `List` · `Delete` · `Execute` |
-| `c.Interactions()` | `RegisterCommands` · `Respond` · `Defer` · `RespondAutocomplete` · `EditResponse` · `UpsertStatusMessage` · `AppID` |
+| `c.Interactions()` | `Register` · `RegisterCommands` · `List` · `Create` · `Edit` · `Delete` · `Registry` · `Respond` · `Defer` · `RespondAutocomplete` · `EditResponse` · `UpsertStatusMessage` · `AppID` |
 | `c.Components()` | `SendSelectMenu` · `Ack` |
 | `c.Guilds()` | `List` · `Sole` |
+
+## Slash commands
+
+Build commands with typed builders, then let a `Registry` own registration and
+dispatch — the gateway only binds a name to a function:
+
+```go
+reg := c.Interactions().Registry()
+
+reg.Add(
+	dctl.NewCommand("set", "dctl settings").
+		Perms(dctl.PermManageGuild).
+		With(
+			dctl.Sub("home", "category holding sessions",
+				dctl.ChannelOpt("channel", "category", true).ChannelTypes(dctl.ChannelCategory)),
+			dctl.Sub("count", "how many",
+				dctl.Int("n", "1–100", true).Range(1, 100)).Loc(dctl.LocaleFR, "nombre", "combien"),
+		),
+	func(ctx context.Context, ix dctl.Interaction) (dctl.Response, error) {
+		return dctl.Response{Content: "ok"}, nil
+	})
+
+reg.Sync(ctx)              // diff against Discord: create / edit / delete
+resp, _ := reg.Dispatch(ctx, ix)  // route incoming interaction to its handler
+```
+
+`Sync` reconciles the live command set (add / remove / update) and refuses to run
+on an empty registry while commands exist, so it never silently wipes everything.
+`Dispatch` routes command interactions by name; attach an autocomplete handler
+with `reg.Autocomplete(name, fn)` and route those via `reg.DispatchAutocomplete`.
+The registry is stable across `c.Interactions().Registry()` calls, and the bot's
+app id / sole guild are resolved once and cached.
+
+Read option values in a handler with `ix.Data.Opt` (string), `OptBool`, `OptInt`,
+`OptFloat`. Option builders cover every Discord type, `Choices`, `Range`, `Len`,
+`ChannelTypes`, `Autocomplete`, and full `Loc` localization. For one-shot bulk
+registration without a registry, use `Register(cmds...)`.
 
 Channel-scoped ops accept `""` to target the configured default channel.
 Guild-scoped ops accept `""` to target the bot's sole server (mono-server); pass
