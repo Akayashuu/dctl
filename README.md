@@ -5,7 +5,7 @@ no websocket, no CLI — every call is an on-demand HTTP request behind a small,
 ergonomic API.
 
 ```sh
-go get github.com/Herrscherd/dctl@v1.0.0
+go get github.com/Herrscherd/dctl@v1.0.1
 ```
 
 ```go
@@ -44,7 +44,7 @@ import.
 | Accessor | Operations |
 |----------|------------|
 | `c.Messages()` | `Send` · `Reply` · `Read` · `Edit` · `Delete` · `LastMessageAt` |
-| `c.Channels()` | `List` · `Get` · `Type` · `Create` · `CreateUnder` · `Rename` · `Update` · `Delete` · `Ensure` · `Archive` |
+| `c.Channels()` | `List` · `Get` · `Type` · `Create` · `CreateUnder` · `Rename` · `Update` · `Delete` · `Ensure` · `EnsureUnder` · `Archive` |
 | `c.Roles()` | `List` · `Create` · `Update` · `Delete` · `Assign` · `Unassign` |
 | `c.Members()` | `List` · `Get` · `Kick` · `Ban` |
 | `c.Reactions()` | `Add` · `Remove` |
