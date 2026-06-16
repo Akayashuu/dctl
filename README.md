@@ -5,7 +5,7 @@ no websocket, no CLI — every call is an on-demand HTTP request behind a small,
 ergonomic API.
 
 ```sh
-go get github.com/Herrscherd/dctl@v1.0.1
+go get github.com/Herrscherd/dctl@v1.1.0
 ```
 
 ```go
