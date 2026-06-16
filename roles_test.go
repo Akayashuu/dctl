@@ -53,6 +53,32 @@ func TestRolesDelete(t *testing.T) {
 	}
 }
 
+func TestRolesUpdate(t *testing.T) {
+	s := transport.NewStub().Reply(`{"id":"r2","name":"new"}`)
+	r, err := roles(s).Update(context.Background(), "g1", "r2", map[string]any{"name": "new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ID != "r2" {
+		t.Fatalf("role = %+v", r)
+	}
+	c := s.Last()
+	if c.Method != "PATCH" || c.Path != "/guilds/g1/roles/r2" {
+		t.Errorf("call = %s %s", c.Method, c.Path)
+	}
+}
+
+func TestRolesUnassign(t *testing.T) {
+	s := transport.NewStub()
+	if err := roles(s).Unassign(context.Background(), "g1", "u1", "r2"); err != nil {
+		t.Fatal(err)
+	}
+	c := s.Last()
+	if c.Method != "DELETE" || c.Path != "/guilds/g1/members/u1/roles/r2" {
+		t.Errorf("call = %s %s", c.Method, c.Path)
+	}
+}
+
 func TestRolesAssignToMember(t *testing.T) {
 	s := transport.NewStub()
 	if err := roles(s).Assign(context.Background(), "g1", "u1", "r2"); err != nil {

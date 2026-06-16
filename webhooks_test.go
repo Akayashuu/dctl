@@ -33,6 +33,10 @@ func TestWebhooksList(t *testing.T) {
 	if len(hooks) != 1 {
 		t.Fatalf("hooks = %+v", hooks)
 	}
+	c := s.Last()
+	if c.Method != "GET" || c.Path != "/channels/c1/webhooks" {
+		t.Errorf("call = %s %s", c.Method, c.Path)
+	}
 }
 
 func TestWebhooksDelete(t *testing.T) {
