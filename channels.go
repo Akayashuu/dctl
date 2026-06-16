@@ -10,9 +10,12 @@ import (
 
 // Channel type constants.
 const (
-	ChannelText     = 0
-	ChannelCategory = 4
-	ChannelForum    = 15
+	ChannelText          = 0
+	ChannelCategory      = 4
+	ChannelNewsThread    = 10
+	ChannelPublicThread  = 11
+	ChannelPrivateThread = 12
+	ChannelForum         = 15
 )
 
 // Channels CRUDs guild channels.
@@ -118,7 +121,7 @@ func (c *Channels) Archive(ctx context.Context, channelID string) error {
 	if err != nil {
 		return err
 	}
-	if ct == 10 || ct == 11 || ct == 12 {
+	if ct == ChannelNewsThread || ct == ChannelPublicThread || ct == ChannelPrivateThread {
 		return c.rt.Do(ctx, http.MethodPatch, "/channels/"+seg(channelID), map[string]any{"archived": true}, nil)
 	}
 	return c.Delete(ctx, channelID)

@@ -2,6 +2,7 @@ package dctl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -31,7 +32,7 @@ func (g *Guilds) Sole(ctx context.Context) (Guild, error) {
 	}
 	switch len(gs) {
 	case 0:
-		return Guild{}, fmt.Errorf("dctl: bot is in no server (invite it first)")
+		return Guild{}, errors.New("dctl: bot is in no server (invite it first)")
 	case 1:
 		return gs[0], nil
 	default:
