@@ -51,9 +51,39 @@ import.
 | `c.Threads()` | `Start` · `CreateForum` · `ForumPost` |
 | `c.Permissions()` | `Set` · `Remove` |
 | `c.Webhooks()` | `Create` · `List` · `Delete` · `Execute` |
-| `c.Interactions()` | `RegisterCommands` · `Respond` · `Defer` · `RespondAutocomplete` · `EditResponse` · `UpsertStatusMessage` · `AppID` |
+| `c.Interactions()` | `Register` · `RegisterCommands` · `List` · `Create` · `Edit` · `Delete` · `Registry` · `Respond` · `Defer` · `RespondAutocomplete` · `EditResponse` · `UpsertStatusMessage` · `AppID` |
 | `c.Components()` | `SendSelectMenu` · `Ack` |
 | `c.Guilds()` | `List` · `Sole` |
+
+## Slash commands
+
+Build commands with typed builders, then let a `Registry` own registration and
+dispatch — the gateway only binds a name to a function:
+
+```go
+reg := c.Interactions().Registry()
+
+reg.Add(
+	dctl.NewCommand("set", "dctl settings").
+		Perms(dctl.PermManageGuild).
+		With(
+			dctl.Sub("home", "category holding sessions",
+				dctl.ChannelOpt("channel", "category", true).ChannelTypes(dctl.ChannelCategory)),
+			dctl.Sub("count", "how many",
+				dctl.Int("n", "1–100", true).Range(1, 100)).Loc(dctl.LocaleFR, "nombre", "combien"),
+		),
+	func(ctx context.Context, ix dctl.Interaction) (dctl.Response, error) {
+		return dctl.Response{Content: "ok"}, nil
+	})
+
+reg.Sync(ctx)              // diff against Discord: create / edit / delete
+resp, _ := reg.Dispatch(ctx, ix)  // route incoming interaction to its handler
+```
+
+`Sync` reconciles the live command set (add / remove / update); `Dispatch` routes
+by name. Option builders cover every Discord type, `Choices`, `Range`, `Len`,
+`ChannelTypes`, `Autocomplete`, and full `Loc` localization. For one-shot bulk
+registration without a registry, use `Register(cmds...)`.
 
 Channel-scoped ops accept `""` to target the configured default channel.
 Guild-scoped ops accept `""` to target the bot's sole server (mono-server); pass

@@ -153,18 +153,90 @@ func (in *Interactions) AppID(ctx context.Context) (string, error) {
 	return u.ID, nil
 }
 
-// RegisterCommands (re)registers the given guild-scoped slash command set for the
-// sole guild (guild-scoped commands appear instantly, unlike global ones).
-func (in *Interactions) RegisterCommands(ctx context.Context, commands []map[string]any) error {
+// RegisteredCommand is the read form of a registered guild command.
+type RegisteredCommand struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+func (in *Interactions) commandsBase(ctx context.Context) (string, error) {
 	appID, err := in.AppID(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	gid, err := in.def.resolveGuild(ctx, "")
 	if err != nil {
+		return "", err
+	}
+	return "/applications/" + seg(appID) + "/guilds/" + seg(gid) + "/commands", nil
+}
+
+// RegisterCommands bulk-overwrites the sole guild's commands from raw maps.
+func (in *Interactions) RegisterCommands(ctx context.Context, commands []map[string]any) error {
+	base, err := in.commandsBase(ctx)
+	if err != nil {
 		return err
 	}
-	return in.rt.Do(ctx, http.MethodPut, "/applications/"+seg(appID)+"/guilds/"+seg(gid)+"/commands", commands, nil)
+	return in.rt.Do(ctx, http.MethodPut, base, commands, nil)
+}
+
+// Register bulk-overwrites the sole guild's commands from builders.
+func (in *Interactions) Register(ctx context.Context, cmds ...*Command) error {
+	body := make([]map[string]any, 0, len(cmds))
+	for _, c := range cmds {
+		body = append(body, c.build())
+	}
+	return in.RegisterCommands(ctx, body)
+}
+
+// List returns the sole guild's currently registered commands.
+func (in *Interactions) List(ctx context.Context) ([]RegisteredCommand, error) {
+	base, err := in.commandsBase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []RegisteredCommand
+	if err := in.rt.Do(ctx, http.MethodGet, base, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Create registers one command and returns its server-assigned id.
+func (in *Interactions) Create(ctx context.Context, cmd *Command) (RegisteredCommand, error) {
+	base, err := in.commandsBase(ctx)
+	if err != nil {
+		return RegisteredCommand{}, err
+	}
+	var out RegisteredCommand
+	if err := in.rt.Do(ctx, http.MethodPost, base, cmd.build(), &out); err != nil {
+		return RegisteredCommand{}, err
+	}
+	return out, nil
+}
+
+// Edit updates the command with the given id.
+func (in *Interactions) Edit(ctx context.Context, id string, cmd *Command) error {
+	base, err := in.commandsBase(ctx)
+	if err != nil {
+		return err
+	}
+	return in.rt.Do(ctx, http.MethodPatch, base+"/"+seg(id), cmd.build(), nil)
+}
+
+// Delete removes the command with the given id.
+func (in *Interactions) Delete(ctx context.Context, id string) error {
+	base, err := in.commandsBase(ctx)
+	if err != nil {
+		return err
+	}
+	return in.rt.Do(ctx, http.MethodDelete, base+"/"+seg(id), nil, nil)
+}
+
+// Registry returns a fresh command registry bound to these interactions.
+func (in *Interactions) Registry() *Registry {
+	return &Registry{in: in, entries: map[string]regEntry{}}
 }
 
 // Respond sends a CHANNEL_MESSAGE_WITH_SOURCE (type 4) reply.

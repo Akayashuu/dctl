@@ -14,21 +14,21 @@ type Client struct {
 	guilds *Guilds
 }
 
-// Option configures a Client.
-type Option func(*clientConfig)
+// ClientOption configures a Client.
+type ClientOption func(*clientConfig)
 
 type clientConfig struct {
 	httpClient *http.Client
 }
 
 // WithHTTPClient overrides the default 15s-timeout HTTP client.
-func WithHTTPClient(h *http.Client) Option {
+func WithHTTPClient(h *http.Client) ClientOption {
 	return func(c *clientConfig) { c.httpClient = h }
 }
 
 // New builds a Client. token is the bot token (kept in memory only). defaultChannel
 // is the channel that message ops target when no explicit channel id is passed.
-func New(token, defaultChannel string, opts ...Option) *Client {
+func New(token, defaultChannel string, opts ...ClientOption) *Client {
 	cfg := &clientConfig{}
 	for _, o := range opts {
 		o(cfg)
