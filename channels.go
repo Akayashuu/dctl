@@ -7,20 +7,6 @@ import (
 	"strings"
 )
 
-// Guild is a Discord server the bot belongs to.
-type Guild struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
-// Channel is a Discord channel. Type 0 is a text channel.
-type Channel struct {
-	ID      string `json:"id"`
-	Name    string `json:"name"`
-	Type    int    `json:"type"`
-	GuildID string `json:"guild_id,omitempty"`
-}
-
 // Guilds lists the servers the bot is a member of.
 func (c *Client) Guilds(ctx context.Context) ([]Guild, error) {
 	if !c.Enabled() {

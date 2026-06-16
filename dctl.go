@@ -26,9 +26,6 @@ const APIBase = "https://discord.com/api/v10"
 // ErrDisabled is returned by every method when no bot token is configured.
 var ErrDisabled = errors.New("dctl: no bot token (DISCORD_BOT_TOKEN)")
 
-// ErrNoChannel is returned when neither an explicit channel nor a default one is set.
-var ErrNoChannel = errors.New("dctl: no channel (DISCORD_CHANNEL_ID or --channel)")
-
 // Client talks to the Discord bot REST API. Build it with New; the zero value
 // is unusable. A client with an empty token returns ErrDisabled from every call
 // so consumers can stay oblivious to whether the feature is on.
@@ -68,33 +65,6 @@ func (c *Client) DefaultChannel() string {
 		return ""
 	}
 	return c.defaultChannel
-}
-
-// Message is the subset of a Discord message we surface.
-type Message struct {
-	ID          string       `json:"id"`
-	ChannelID   string       `json:"channel_id"`
-	Content     string       `json:"content"`
-	Author      Author       `json:"author"`
-	Timestamp   string       `json:"timestamp"`
-	Attachments []Attachment `json:"attachments"`
-}
-
-// Author identifies who wrote a message.
-type Author struct {
-	ID       string `json:"id"`
-	Username string `json:"username"`
-	Bot      bool   `json:"bot"`
-}
-
-// Attachment is a file uploaded alongside a Discord message. URL points at the
-// Discord CDN and is fetched directly (not via the API base).
-type Attachment struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	URL         string `json:"url"`
-	ContentType string `json:"content_type"`
-	Size        int    `json:"size"`
 }
 
 // Send posts content to channelID (or the default channel when empty) and
