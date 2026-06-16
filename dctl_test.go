@@ -1,47 +1,40 @@
 package dctl
 
 import (
-	"net/http"
-	"net/http/httptest"
-	"strings"
+	"context"
 	"testing"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
-// newTestClient points a Client at a stub server instead of the real Discord API.
-func newTestClient(t *testing.T, h http.HandlerFunc) *Client {
-	t.Helper()
-	srv := httptest.NewServer(h)
-	t.Cleanup(srv.Close)
-	c := New("tok", "defchan")
-	c.http = srv.Client()
-	c.http.Transport = rewriteHost{base: srv.URL, rt: srv.Client().Transport}
-	return c
+func TestNewWiresSubClientsWithSharedDefaults(t *testing.T) {
+	c := New("tok", "chan123")
+	if !c.Enabled() {
+		t.Error("want enabled")
+	}
+	if c.DefaultChannel() != "chan123" {
+		t.Errorf("default channel = %q", c.DefaultChannel())
+	}
+	if c.Messages() == nil || c.Channels() == nil || c.Roles() == nil ||
+		c.Members() == nil || c.Reactions() == nil || c.Threads() == nil ||
+		c.Permissions() == nil || c.Webhooks() == nil || c.Interactions() == nil ||
+		c.Components() == nil || c.Guilds() == nil {
+		t.Fatal("an accessor returned nil")
+	}
 }
 
-type rewriteHost struct {
-	base string
-	rt   http.RoundTripper
+func TestNewWithTransportInjectsStub(t *testing.T) {
+	s := transport.NewStub().Reply(`{"id":"m1"}`)
+	c := newWith(s, "chan")
+	if c.Messages() == nil {
+		t.Fatal("messages nil")
+	}
 }
 
-func (rw rewriteHost) RoundTrip(r *http.Request) (*http.Response, error) {
-	r.URL.Scheme = "http"
-	r.URL.Host = strings.TrimPrefix(rw.base, "http://")
-	if rw.rt == nil {
-		rw.rt = http.DefaultTransport
-	}
-	return rw.rt.RoundTrip(r)
-}
-
-func TestResolveChannelFallsBackToDefault(t *testing.T) {
-	c := New("tok", "defchan")
-	if ch, _ := c.resolveChannel(""); ch != "defchan" {
-		t.Fatalf("want defchan, got %q", ch)
-	}
-	if ch, _ := c.resolveChannel("explicit"); ch != "explicit" {
-		t.Fatalf("want explicit, got %q", ch)
-	}
-	c2 := New("tok", "")
-	if _, err := c2.resolveChannel(""); err != ErrNoChannel {
-		t.Fatalf("want ErrNoChannel, got %v", err)
+func TestDisabledClientErrors(t *testing.T) {
+	c := New("", "")
+	_, err := c.Messages().Send(context.Background(), "x", "hi")
+	if err != transport.ErrDisabled {
+		t.Errorf("err = %v, want ErrDisabled", err)
 	}
 }

@@ -1,115 +1,103 @@
-// Package dctl is a minimal, dependency-free client for the Discord bot REST
-// API (v10). It powers both the `dctl` CLI (token-frugal Discord access for an
-// AI agent) and the prospector backend's Discord bridge — one library, two
-// consumers. Mono-server by design: a single bot token plus a default channel.
-//
-// Auth is a bot token (DISCORD_BOT_TOKEN) sent as `Authorization: Bot <token>`.
-// No gateway/websocket — every call is on-demand HTTP, which suits agent-driven
-// usage (send/read/reply) and best-effort notification fan-out.
 package dctl
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"strings"
-	"time"
+
+	"github.com/Herrscherd/dctl/internal/transport"
 )
 
-// APIBase is the Discord REST API root.
-const APIBase = "https://discord.com/api/v10"
-
-// ErrDisabled is returned by every method when no bot token is configured.
-var ErrDisabled = errors.New("dctl: no bot token (DISCORD_BOT_TOKEN)")
-
-// Client talks to the Discord bot REST API. Build it with New; the zero value
-// is unusable. A client with an empty token returns ErrDisabled from every call
-// so consumers can stay oblivious to whether the feature is on.
+// Client is the dctl façade: it wires the HTTP transport into per-resource
+// sub-clients sharing one default channel/guild resolver. Build it with New.
 type Client struct {
-	token          string
-	defaultChannel string
-	http           *http.Client
+	rt      transport.Doer
+	enabled func() bool
+	defChan string
+	def     *defaults
+	guilds  *Guilds
 }
 
 // Option configures a Client.
-type Option func(*Client)
+type Option func(*clientConfig)
+
+type clientConfig struct {
+	httpClient *http.Client
+}
 
 // WithHTTPClient overrides the default 15s-timeout HTTP client.
-func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
+func WithHTTPClient(h *http.Client) Option {
+	return func(c *clientConfig) { c.httpClient = h }
+}
 
-// New builds a Client. token is the bot token (kept in memory only, never
-// logged). defaultChannel is the channel that send/read/reply target when no
-// explicit channel id is passed.
+// New builds a Client. token is the bot token (kept in memory only). defaultChannel
+// is the channel that message ops target when no explicit channel id is passed.
 func New(token, defaultChannel string, opts ...Option) *Client {
-	c := &Client{
-		token:          token,
-		defaultChannel: defaultChannel,
-		http:           &http.Client{Timeout: 15 * time.Second},
-	}
+	cfg := &clientConfig{}
 	for _, o := range opts {
-		o(c)
+		o(cfg)
 	}
+	var topts []transport.Option
+	if cfg.httpClient != nil {
+		topts = append(topts, transport.WithHTTPClient(cfg.httpClient))
+	}
+	rt := transport.NewHTTP(token, topts...)
+	c := newWith(rt, defaultChannel)
+	c.enabled = rt.Enabled
 	return c
 }
 
-// Enabled reports whether a bot token is configured.
-func (c *Client) Enabled() bool { return c != nil && c.token != "" }
+// newWith wires a Client around an arbitrary Doer (used by tests with a stub).
+func newWith(rt transport.Doer, defaultChannel string) *Client {
+	guilds := &Guilds{rt: rt}
+	def := &defaults{channel: defaultChannel, guilds: guilds}
+	return &Client{
+		rt:      rt,
+		enabled: func() bool { return true },
+		defChan: defaultChannel,
+		def:     def,
+		guilds:  guilds,
+	}
+}
 
-// DefaultChannel returns the configured fan-out / fallback channel id.
+// Enabled reports whether a bot token is configured.
+func (c *Client) Enabled() bool { return c != nil && c.enabled() }
+
+// DefaultChannel returns the configured default channel id.
 func (c *Client) DefaultChannel() string {
 	if c == nil {
 		return ""
 	}
-	return c.defaultChannel
+	return c.defChan
 }
 
-func (c *Client) resolveChannel(channelID string) (string, error) {
-	if channelID != "" {
-		return channelID, nil
-	}
-	if c.defaultChannel == "" {
-		return "", ErrNoChannel
-	}
-	return c.defaultChannel, nil
-}
+// Guilds returns the Guilds sub-client.
+func (c *Client) Guilds() *Guilds { return c.guilds }
 
-func (c *Client) newRequest(ctx context.Context, method, path string, body any) (*http.Request, error) {
-	var rdr io.Reader
-	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		rdr = bytes.NewReader(buf)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, APIBase+path, rdr)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bot "+c.token)
-	req.Header.Set("User-Agent", "dctl (https://github.com/Herrscherd/dctl, 1.0)")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	return req, nil
-}
+// Messages returns a Messages sub-client sharing the transport and defaults.
+func (c *Client) Messages() *Messages { return &Messages{rt: c.rt, def: c.def} }
 
-func (c *Client) do(req *http.Request, out any) error {
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("discord %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	if out == nil || len(respBody) == 0 {
-		return nil
-	}
-	return json.Unmarshal(respBody, out)
-}
+// Channels returns a Channels sub-client sharing the transport and defaults.
+func (c *Client) Channels() *Channels { return &Channels{rt: c.rt, def: c.def} }
+
+// Roles returns a Roles sub-client sharing the transport and defaults.
+func (c *Client) Roles() *Roles { return &Roles{rt: c.rt, def: c.def} }
+
+// Members returns a Members sub-client sharing the transport and defaults.
+func (c *Client) Members() *Members { return &Members{rt: c.rt, def: c.def} }
+
+// Reactions returns a Reactions sub-client sharing the transport.
+func (c *Client) Reactions() *Reactions { return &Reactions{rt: c.rt} }
+
+// Threads returns a Threads sub-client sharing the transport and defaults.
+func (c *Client) Threads() *Threads { return &Threads{rt: c.rt, def: c.def} }
+
+// Permissions returns a Permissions sub-client sharing the transport.
+func (c *Client) Permissions() *Permissions { return &Permissions{rt: c.rt} }
+
+// Webhooks returns a Webhooks sub-client sharing the transport.
+func (c *Client) Webhooks() *Webhooks { return &Webhooks{rt: c.rt} }
+
+// Interactions returns an Interactions sub-client sharing the transport and defaults.
+func (c *Client) Interactions() *Interactions { return &Interactions{rt: c.rt, def: c.def} }
+
+// Components returns a Components sub-client sharing the transport and defaults.
+func (c *Client) Components() *Components { return &Components{rt: c.rt, def: c.def} }
