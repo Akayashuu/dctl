@@ -26,7 +26,6 @@ func (p *Permissions) Set(ctx context.Context, channelID, overwriteID string, ki
 		map[string]any{"type": kind, "allow": allow, "deny": deny}, nil)
 }
 
-// Remove deletes a permission overwrite.
 func (p *Permissions) Remove(ctx context.Context, channelID, overwriteID string) error {
 	return p.rt.Do(ctx, http.MethodDelete, "/channels/"+seg(channelID)+"/permissions/"+seg(overwriteID), nil, nil)
 }

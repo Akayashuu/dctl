@@ -1,4 +1,3 @@
-// roles_test.go
 package dctl
 
 import (

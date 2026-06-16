@@ -19,26 +19,23 @@ type Webhooks struct {
 	rt transport.Doer
 }
 
-// Create creates a webhook named name on channelID.
 func (w *Webhooks) Create(ctx context.Context, channelID, name string) (*Webhook, error) {
 	var hook Webhook
-	if err := w.rt.Do(ctx, http.MethodPost, "/channels/"+channelID+"/webhooks",
+	if err := w.rt.Do(ctx, http.MethodPost, "/channels/"+seg(channelID)+"/webhooks",
 		map[string]any{"name": name}, &hook); err != nil {
 		return nil, err
 	}
 	return &hook, nil
 }
 
-// List returns the webhooks of channelID.
 func (w *Webhooks) List(ctx context.Context, channelID string) ([]Webhook, error) {
 	var hooks []Webhook
-	if err := w.rt.Do(ctx, http.MethodGet, "/channels/"+channelID+"/webhooks", nil, &hooks); err != nil {
+	if err := w.rt.Do(ctx, http.MethodGet, "/channels/"+seg(channelID)+"/webhooks", nil, &hooks); err != nil {
 		return nil, err
 	}
 	return hooks, nil
 }
 
-// Delete removes a webhook by id.
 func (w *Webhooks) Delete(ctx context.Context, webhookID string) error {
 	return w.rt.Do(ctx, http.MethodDelete, "/webhooks/"+seg(webhookID), nil, nil)
 }

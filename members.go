@@ -34,7 +34,6 @@ func (m *Members) List(ctx context.Context, guildID string, limit int) ([]GuildM
 	return ms, nil
 }
 
-// Get returns a single member.
 func (m *Members) Get(ctx context.Context, guildID, userID string) (*GuildMember, error) {
 	gid, err := m.def.resolveGuild(ctx, guildID)
 	if err != nil {
@@ -47,7 +46,6 @@ func (m *Members) Get(ctx context.Context, guildID, userID string) (*GuildMember
 	return &gm, nil
 }
 
-// Kick removes a member from the guild.
 func (m *Members) Kick(ctx context.Context, guildID, userID string) error {
 	gid, err := m.def.resolveGuild(ctx, guildID)
 	if err != nil {
@@ -56,7 +54,6 @@ func (m *Members) Kick(ctx context.Context, guildID, userID string) error {
 	return m.rt.Do(ctx, http.MethodDelete, "/guilds/"+seg(gid)+"/members/"+seg(userID), nil, nil)
 }
 
-// Ban bans a member from the guild.
 func (m *Members) Ban(ctx context.Context, guildID, userID string) error {
 	gid, err := m.def.resolveGuild(ctx, guildID)
 	if err != nil {

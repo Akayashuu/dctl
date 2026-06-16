@@ -69,7 +69,6 @@ func (m *Messages) Read(ctx context.Context, channelID string, limit int, after 
 	return msgs, nil
 }
 
-// Edit replaces a message's content.
 func (m *Messages) Edit(ctx context.Context, channelID, messageID, content string) (*Message, error) {
 	ch, err := m.def.resolveChannel(channelID)
 	if err != nil {
@@ -83,7 +82,6 @@ func (m *Messages) Edit(ctx context.Context, channelID, messageID, content strin
 	return &msg, nil
 }
 
-// Delete removes a message.
 func (m *Messages) Delete(ctx context.Context, channelID, messageID string) error {
 	ch, err := m.def.resolveChannel(channelID)
 	if err != nil {

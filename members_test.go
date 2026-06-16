@@ -1,4 +1,3 @@
-// members_test.go
 package dctl
 
 import (

@@ -59,35 +59,16 @@ func (c *Client) DefaultChannel() string {
 	return c.def.channel
 }
 
-// Guilds returns the Guilds sub-client.
-func (c *Client) Guilds() *Guilds { return c.guilds }
-
-// Messages returns a Messages sub-client sharing the transport and defaults.
-func (c *Client) Messages() *Messages { return &Messages{rt: c.rt, def: c.def} }
-
-// Channels returns a Channels sub-client sharing the transport and defaults.
-func (c *Client) Channels() *Channels { return &Channels{rt: c.rt, def: c.def} }
-
-// Roles returns a Roles sub-client sharing the transport and defaults.
-func (c *Client) Roles() *Roles { return &Roles{rt: c.rt, def: c.def} }
-
-// Members returns a Members sub-client sharing the transport and defaults.
-func (c *Client) Members() *Members { return &Members{rt: c.rt, def: c.def} }
-
-// Reactions returns a Reactions sub-client sharing the transport.
-func (c *Client) Reactions() *Reactions { return &Reactions{rt: c.rt, def: c.def} }
-
-// Threads returns a Threads sub-client sharing the transport and defaults.
-func (c *Client) Threads() *Threads { return &Threads{rt: c.rt, def: c.def} }
-
-// Permissions returns a Permissions sub-client sharing the transport.
-func (c *Client) Permissions() *Permissions { return &Permissions{rt: c.rt} }
-
-// Webhooks returns a Webhooks sub-client sharing the transport.
-func (c *Client) Webhooks() *Webhooks { return &Webhooks{rt: c.rt} }
-
-// Interactions returns an Interactions sub-client sharing the transport and defaults.
+// Sub-client accessors. Each shares the transport and (where relevant) the
+// default channel/guild resolver.
+func (c *Client) Guilds() *Guilds             { return c.guilds }
+func (c *Client) Messages() *Messages         { return &Messages{rt: c.rt, def: c.def} }
+func (c *Client) Channels() *Channels         { return &Channels{rt: c.rt, def: c.def} }
+func (c *Client) Roles() *Roles               { return &Roles{rt: c.rt, def: c.def} }
+func (c *Client) Members() *Members           { return &Members{rt: c.rt, def: c.def} }
+func (c *Client) Reactions() *Reactions       { return &Reactions{rt: c.rt, def: c.def} }
+func (c *Client) Threads() *Threads           { return &Threads{rt: c.rt, def: c.def} }
+func (c *Client) Permissions() *Permissions   { return &Permissions{rt: c.rt} }
+func (c *Client) Webhooks() *Webhooks         { return &Webhooks{rt: c.rt} }
 func (c *Client) Interactions() *Interactions { return &Interactions{rt: c.rt, def: c.def} }
-
-// Components returns a Components sub-client sharing the transport and defaults.
-func (c *Client) Components() *Components { return &Components{rt: c.rt, def: c.def} }
+func (c *Client) Components() *Components     { return &Components{rt: c.rt, def: c.def} }

@@ -1,4 +1,3 @@
-// internal/transport/stub_test.go
 package transport
 
 import (

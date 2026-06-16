@@ -1,4 +1,3 @@
-// internal/transport/transport_test.go
 package transport
 
 import (
