@@ -11,7 +11,7 @@ import (
 type Webhook struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
-	Token string `json:"token"`
+	Token Secret `json:"token"`
 }
 
 // Webhooks CRUDs and executes channel webhooks.

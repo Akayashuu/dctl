@@ -4,6 +4,16 @@
 // channel).
 package dctl
 
+// Secret is a token-like string that redacts itself in logs (%v, %+v, %#v) and
+// JSON so it can't leak by accident. Call Reveal to get the value when you must
+// send it (e.g. Webhooks.Execute).
+type Secret string
+
+func (Secret) String() string               { return "[REDACTED]" }
+func (Secret) GoString() string             { return "[REDACTED]" }
+func (Secret) MarshalJSON() ([]byte, error) { return []byte(`"[REDACTED]"`), nil }
+func (s Secret) Reveal() string             { return string(s) }
+
 // Author identifies who wrote a message.
 type Author struct {
 	ID       string `json:"id"`
