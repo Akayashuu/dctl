@@ -2,6 +2,7 @@ package dctl
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Herrscherd/dctl/internal/transport"
@@ -218,6 +219,10 @@ func (in *Interactions) UpsertStatusMessage(ctx context.Context, channelID, msgI
 			map[string]any{"content": content}, nil)
 		if err == nil {
 			return msgID, nil
+		}
+		var apiErr *transport.APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+			return "", err
 		}
 	}
 	var msg Message

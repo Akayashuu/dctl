@@ -21,6 +21,14 @@ const DefaultBase = "https://discord.com/api/v10"
 // ErrDisabled is returned by Do when no bot token is configured.
 var ErrDisabled = errors.New("dctl: no bot token (DISCORD_BOT_TOKEN)")
 
+// APIError is a non-2xx response from the Discord REST API.
+type APIError struct {
+	Status int
+	Body   string
+}
+
+func (e *APIError) Error() string { return fmt.Sprintf("discord %d: %s", e.Status, e.Body) }
+
 // Doer performs one Discord REST call: it marshals body (if non-nil), executes
 // method+path against the API, and decodes the JSON response into out (if non-nil).
 type Doer interface {
@@ -86,7 +94,7 @@ func (h *HTTP) Do(ctx context.Context, method, path string, body, out any) error
 		return fmt.Errorf("reading response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("discord %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return &APIError{Status: resp.StatusCode, Body: strings.TrimSpace(string(respBody))}
 	}
 	if out == nil || len(respBody) == 0 {
 		return nil
