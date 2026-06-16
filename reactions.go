@@ -4,33 +4,26 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+
+	"github.com/Akayashuu/dctl/internal/transport"
 )
 
-// React adds emoji as a reaction (from the bot) to messageID in channelID (or
-// the default channel). emoji is a raw unicode emoji ("👀") or a custom emoji
-// in "name:id" form. Best-effort: needs the bot's Add Reactions permission.
-func (c *Client) React(ctx context.Context, channelID, messageID, emoji string) error {
-	return c.reaction(ctx, http.MethodPut, channelID, messageID, emoji)
+// Reactions adds/removes the bot's reactions on a message.
+type Reactions struct {
+	rt transport.Doer
 }
 
-// Unreact removes the bot's own emoji reaction from messageID.
-func (c *Client) Unreact(ctx context.Context, channelID, messageID, emoji string) error {
-	return c.reaction(ctx, http.MethodDelete, channelID, messageID, emoji)
+// Add reacts to messageID with emoji (unicode or "name:id" for custom).
+func (r *Reactions) Add(ctx context.Context, channelID, messageID, emoji string) error {
+	return r.do(ctx, http.MethodPut, channelID, messageID, emoji)
 }
 
-func (c *Client) reaction(ctx context.Context, method, channelID, messageID, emoji string) error {
-	if !c.Enabled() {
-		return ErrDisabled
-	}
-	ch, err := c.resolveChannel(channelID)
-	if err != nil {
-		return err
-	}
-	path := "/channels/" + ch + "/messages/" + messageID +
-		"/reactions/" + url.PathEscape(emoji) + "/@me"
-	req, err := c.newRequest(ctx, method, path, nil)
-	if err != nil {
-		return err
-	}
-	return c.do(req, nil)
+// Remove removes the bot's own reaction.
+func (r *Reactions) Remove(ctx context.Context, channelID, messageID, emoji string) error {
+	return r.do(ctx, http.MethodDelete, channelID, messageID, emoji)
+}
+
+func (r *Reactions) do(ctx context.Context, method, channelID, messageID, emoji string) error {
+	path := "/channels/" + channelID + "/messages/" + messageID + "/reactions/" + url.PathEscape(emoji) + "/@me"
+	return r.rt.Do(ctx, method, path, nil, nil)
 }
