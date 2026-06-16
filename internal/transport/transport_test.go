@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -59,7 +60,7 @@ func TestHTTPDoSurfacesAPIError(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
-	if want := "discord 403"; !contains(err.Error(), want) {
+	if want := "discord 403"; !strings.Contains(err.Error(), want) {
 		t.Errorf("err = %q, want containing %q", err.Error(), want)
 	}
 }
@@ -72,20 +73,10 @@ func TestHTTPDoMarshalsBody(t *testing.T) {
 	}))
 	defer srv.Close()
 	rt := NewHTTP("tok", WithBase(srv.URL))
-	rt.Do(context.Background(), http.MethodPost, "/x", map[string]any{"content": "hi"}, nil)
+	if err := rt.Do(context.Background(), http.MethodPost, "/x", map[string]any{"content": "hi"}, nil); err != nil {
+		t.Fatal(err)
+	}
 	if got["content"] != "hi" {
 		t.Errorf("body content = %v", got["content"])
 	}
-}
-
-func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0)
-}
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

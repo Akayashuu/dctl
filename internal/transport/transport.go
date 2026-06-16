@@ -29,9 +29,9 @@ type Doer interface {
 
 // HTTP is the real Doer.
 type HTTP struct {
-	token string
-	base  string
-	http  *http.Client
+	token  string
+	base   string
+	client *http.Client
 }
 
 // Option configures an HTTP transport.
@@ -41,11 +41,11 @@ type Option func(*HTTP)
 func WithBase(base string) Option { return func(h *HTTP) { h.base = base } }
 
 // WithHTTPClient overrides the default 15s-timeout client.
-func WithHTTPClient(c *http.Client) Option { return func(h *HTTP) { h.http = c } }
+func WithHTTPClient(c *http.Client) Option { return func(h *HTTP) { h.client = c } }
 
 // NewHTTP builds the real transport. An empty token makes every Do return ErrDisabled.
 func NewHTTP(token string, opts ...Option) *HTTP {
-	h := &HTTP{token: token, base: DefaultBase, http: &http.Client{Timeout: 15 * time.Second}}
+	h := &HTTP{token: token, base: DefaultBase, client: &http.Client{Timeout: 15 * time.Second}}
 	for _, o := range opts {
 		o(h)
 	}
@@ -76,12 +76,15 @@ func (h *HTTP) Do(ctx context.Context, method, path string, body, out any) error
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := h.http.Do(req)
+	resp, err := h.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("discord %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
