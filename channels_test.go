@@ -65,10 +65,10 @@ func TestChannelsEnsureUnderReuses(t *testing.T) {
 func TestChannelsEnsureUnderCreates(t *testing.T) {
 	// No match under p1 (the existing channel sits under a different parent), so
 	// it creates one nested under p1.
+	// The sole-guild id is resolved and cached once, so only one guild-list reply.
 	s := transport.NewStub().
 		Reply(`[{"id":"g1"}]`).
 		Reply(`[{"id":"c9","name":"notes","type":0,"parent_id":"other"}]`).
-		Reply(`[{"id":"g1"}]`).
 		Reply(`{"id":"c10","name":"notes","type":0,"parent_id":"p1"}`)
 	ch, err := chans(s).EnsureUnder(context.Background(), "p1", "notes")
 	if err != nil {

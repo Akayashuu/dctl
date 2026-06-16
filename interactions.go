@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 
 	"github.com/Herrscherd/dctl/internal/transport"
 )
@@ -107,6 +108,39 @@ func findBool(opts []InteractionOption, name string) (bool, bool) {
 	return false, false
 }
 
+// OptInt returns the integer value of a (possibly nested) option by name. Discord
+// delivers numbers as JSON floats, so INTEGER options arrive as float64 here.
+func (d InteractionData) OptInt(name string) (int64, bool) {
+	if v, ok := findValue(d.Options, name); ok {
+		if f, ok := v.(float64); ok {
+			return int64(f), true
+		}
+	}
+	return 0, false
+}
+
+// OptFloat returns the float value of a (possibly nested) NUMBER option by name.
+func (d InteractionData) OptFloat(name string) (float64, bool) {
+	if v, ok := findValue(d.Options, name); ok {
+		if f, ok := v.(float64); ok {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+func findValue(opts []InteractionOption, name string) (any, bool) {
+	for _, o := range opts {
+		if o.Name == name && o.Value != nil {
+			return o.Value, true
+		}
+		if v, ok := findValue(o.Options, name); ok {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 // Focused returns the name and current (partial) string value of the option the
 // user is typing in an autocomplete interaction, searching nested subcommands.
 func (d InteractionData) Focused() (name, value string, ok bool) {
@@ -140,14 +174,25 @@ func (d InteractionData) Subcommand() (string, []InteractionOption) {
 type Interactions struct {
 	rt  transport.Doer
 	def *defaults
+
+	regOnce sync.Once
+	reg     *Registry
 }
 
-// AppID returns the bot's application id (== bot user id) via /users/@me.
+// AppID returns the bot's application id (== bot user id), cached after the
+// first /users/@me call.
 func (in *Interactions) AppID(ctx context.Context) (string, error) {
+	if in.def != nil {
+		return in.def.appIDOnce(ctx)
+	}
+	return fetchAppID(ctx, in.rt)
+}
+
+func fetchAppID(ctx context.Context, rt transport.Doer) (string, error) {
 	var u struct {
 		ID string `json:"id"`
 	}
-	if err := in.rt.Do(ctx, http.MethodGet, "/users/@me", nil, &u); err != nil {
+	if err := rt.Do(ctx, http.MethodGet, "/users/@me", nil, &u); err != nil {
 		return "", err
 	}
 	return u.ID, nil
@@ -234,9 +279,14 @@ func (in *Interactions) Delete(ctx context.Context, id string) error {
 	return in.rt.Do(ctx, http.MethodDelete, base+"/"+seg(id), nil, nil)
 }
 
-// Registry returns a fresh command registry bound to these interactions.
+// Registry returns the command registry bound to these interactions. The same
+// registry is returned on every call, so bindings registered at setup are seen
+// at dispatch time.
 func (in *Interactions) Registry() *Registry {
-	return &Registry{in: in, entries: map[string]regEntry{}}
+	in.regOnce.Do(func() {
+		in.reg = &Registry{in: in, entries: map[string]regEntry{}}
+	})
+	return in.reg
 }
 
 // Respond sends a CHANNEL_MESSAGE_WITH_SOURCE (type 4) reply.

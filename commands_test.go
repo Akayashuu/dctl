@@ -91,6 +91,18 @@ func TestContextMenuCommandHasNoDescription(t *testing.T) {
 	}
 }
 
+func TestContextMenuCommandOmitsDescriptionLocalizations(t *testing.T) {
+	// Loc on a context-menu command may localize the name but must NOT emit
+	// description_localizations (Discord rejects it for type 2/3).
+	got := NewUserCommand("Report").Loc(LocaleFR, "Signaler", "ignored").JSON()
+	if _, ok := got["description_localizations"]; ok {
+		t.Errorf("context-menu command must omit description_localizations: %#v", got)
+	}
+	if got["name_localizations"].(map[string]string)["fr"] != "Signaler" {
+		t.Errorf("name localization should still be set: %#v", got["name_localizations"])
+	}
+}
+
 func TestOptionLocDoesNotMutateShared(t *testing.T) {
 	base := String("x", "y", true)
 	a := base.Loc(LocaleFR, "fr", "frd")

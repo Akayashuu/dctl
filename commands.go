@@ -116,12 +116,12 @@ func (c *Command) build() map[string]any {
 	m := map[string]any{"name": c.name, "type": c.typ}
 	if c.typ == cmdChatInput {
 		m["description"] = c.desc
+		if len(c.descLoc) > 0 {
+			m["description_localizations"] = c.descLoc
+		}
 	}
 	if len(c.nameLoc) > 0 {
 		m["name_localizations"] = c.nameLoc
-	}
-	if len(c.descLoc) > 0 {
-		m["description_localizations"] = c.descLoc
 	}
 	if c.perms != nil {
 		m["default_member_permissions"] = *c.perms
