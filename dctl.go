@@ -85,7 +85,7 @@ func (c *Client) Roles() *Roles { return &Roles{rt: c.rt, def: c.def} }
 func (c *Client) Members() *Members { return &Members{rt: c.rt, def: c.def} }
 
 // Reactions returns a Reactions sub-client sharing the transport.
-func (c *Client) Reactions() *Reactions { return &Reactions{rt: c.rt} }
+func (c *Client) Reactions() *Reactions { return &Reactions{rt: c.rt, def: c.def} }
 
 // Threads returns a Threads sub-client sharing the transport and defaults.
 func (c *Client) Threads() *Threads { return &Threads{rt: c.rt, def: c.def} }

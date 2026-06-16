@@ -10,7 +10,7 @@ import (
 
 func TestReactionsAddEncodesEmoji(t *testing.T) {
 	s := transport.NewStub()
-	r := &Reactions{rt: s}
+	r := &Reactions{rt: s, def: &defaults{}}
 	if err := r.Add(context.Background(), "c", "m", "👍"); err != nil {
 		t.Fatal(err)
 	}
@@ -23,11 +23,29 @@ func TestReactionsAddEncodesEmoji(t *testing.T) {
 
 func TestReactionsRemove(t *testing.T) {
 	s := transport.NewStub()
-	r := &Reactions{rt: s}
+	r := &Reactions{rt: s, def: &defaults{}}
 	if err := r.Remove(context.Background(), "c", "m", "👍"); err != nil {
 		t.Fatal(err)
 	}
 	if c := s.Last(); c.Method != "DELETE" {
 		t.Errorf("method = %s", c.Method)
+	}
+}
+
+func TestReactionsUsesDefaultChannel(t *testing.T) {
+	s := transport.NewStub()
+	r := &Reactions{rt: s, def: &defaults{channel: "def"}}
+	if err := r.Add(context.Background(), "", "m", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if c := s.Last(); c.Path != "/channels/def/messages/m/reactions/x/@me" {
+		t.Errorf("path = %s", c.Path)
+	}
+}
+
+func TestReactionsNoChannel(t *testing.T) {
+	r := &Reactions{rt: transport.NewStub(), def: &defaults{}}
+	if err := r.Add(context.Background(), "", "m", "x"); err != ErrNoChannel {
+		t.Errorf("err = %v, want ErrNoChannel", err)
 	}
 }

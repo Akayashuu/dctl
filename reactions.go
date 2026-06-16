@@ -10,7 +10,8 @@ import (
 
 // Reactions adds/removes the bot's reactions on a message.
 type Reactions struct {
-	rt transport.Doer
+	rt  transport.Doer
+	def *defaults
 }
 
 // Add reacts to messageID with emoji (unicode or "name:id" for custom).
@@ -24,6 +25,10 @@ func (r *Reactions) Remove(ctx context.Context, channelID, messageID, emoji stri
 }
 
 func (r *Reactions) do(ctx context.Context, method, channelID, messageID, emoji string) error {
-	path := "/channels/" + channelID + "/messages/" + messageID + "/reactions/" + url.PathEscape(emoji) + "/@me"
+	ch, err := r.def.resolveChannel(channelID)
+	if err != nil {
+		return err
+	}
+	path := "/channels/" + ch + "/messages/" + messageID + "/reactions/" + url.PathEscape(emoji) + "/@me"
 	return r.rt.Do(ctx, method, path, nil, nil)
 }

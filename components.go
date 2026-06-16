@@ -43,7 +43,7 @@ func choiceMenuComponents(customID string, options []SelectOption) []map[string]
 }
 
 // SendSelectMenu posts content with a single-select dropdown. When replyTo is
-// set the message threads under it; customID routes the click back to a session.
+// set the message threads under it; customID routes the click back to the caller.
 func (c *Components) SendSelectMenu(ctx context.Context, channelID, replyTo, content, customID string, options []SelectOption) (*Message, error) {
 	ch, err := c.def.resolveChannel(channelID)
 	if err != nil {
