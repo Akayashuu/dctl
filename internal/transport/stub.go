@@ -19,10 +19,17 @@ type Stub struct {
 	replies  []string
 	err      error
 	nextErrs []error
+	disabled bool
 }
 
-// NewStub builds an empty stub.
+// NewStub builds an empty, enabled stub.
 func NewStub() *Stub { return &Stub{} }
+
+// Disable makes Enabled report false (defaults to enabled).
+func (s *Stub) Disable() *Stub { s.disabled = true; return s }
+
+// Enabled reports whether the stub acts as a configured transport.
+func (s *Stub) Enabled() bool { return !s.disabled }
 
 // Reply queues a canned JSON response body (consumed in order by Do).
 func (s *Stub) Reply(raw string) *Stub { s.replies = append(s.replies, raw); return s }

@@ -9,11 +9,9 @@ import (
 // Client is the dctl façade: it wires the HTTP transport into per-resource
 // sub-clients sharing one default channel/guild resolver. Build it with New.
 type Client struct {
-	rt      transport.Doer
-	enabled func() bool
-	defChan string
-	def     *defaults
-	guilds  *Guilds
+	rt     transport.Doer
+	def    *defaults
+	guilds *Guilds
 }
 
 // Option configures a Client.
@@ -40,33 +38,25 @@ func New(token, defaultChannel string, opts ...Option) *Client {
 		topts = append(topts, transport.WithHTTPClient(cfg.httpClient))
 	}
 	rt := transport.NewHTTP(token, topts...)
-	c := newWith(rt, defaultChannel)
-	c.enabled = rt.Enabled
-	return c
+	return newWith(rt, defaultChannel)
 }
 
 // newWith wires a Client around an arbitrary Doer (used by tests with a stub).
 func newWith(rt transport.Doer, defaultChannel string) *Client {
 	guilds := &Guilds{rt: rt}
 	def := &defaults{channel: defaultChannel, guilds: guilds}
-	return &Client{
-		rt:      rt,
-		enabled: func() bool { return true },
-		defChan: defaultChannel,
-		def:     def,
-		guilds:  guilds,
-	}
+	return &Client{rt: rt, def: def, guilds: guilds}
 }
 
-// Enabled reports whether a bot token is configured.
-func (c *Client) Enabled() bool { return c != nil && c.enabled() }
+// Enabled reports whether the underlying transport is configured.
+func (c *Client) Enabled() bool { return c != nil && c.rt.Enabled() }
 
 // DefaultChannel returns the configured default channel id.
 func (c *Client) DefaultChannel() string {
 	if c == nil {
 		return ""
 	}
-	return c.defChan
+	return c.def.channel
 }
 
 // Guilds returns the Guilds sub-client.

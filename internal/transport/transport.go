@@ -33,6 +33,7 @@ func (e *APIError) Error() string { return fmt.Sprintf("discord %d: %s", e.Statu
 // method+path against the API, and decodes the JSON response into out (if non-nil).
 type Doer interface {
 	Do(ctx context.Context, method, path string, body, out any) error
+	Enabled() bool
 }
 
 // HTTP is the real Doer.
